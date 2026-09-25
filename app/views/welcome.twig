@@ -1,0 +1,25 @@
+{% extends 'layout.twig' %}
+
+{% block title %}Welcome — log-anomaly-detector{% endblock %}
+
+{% block body %}
+<div class="card">
+    <h1>Welcome to FlightPHP</h1>
+    {% if message %}
+        <p>{{ message }}</p>
+    {% endif %}
+    <p class="muted">
+        Environment: <code>{{ env }}</code>
+        · Debug: <code>{{ debug ? 'on' : 'off' }}</code>
+    </p>
+</div>
+<div class="card">
+    <h2>Next steps</h2>
+    <ol>
+        <li>Run <code>php runway migrate</code> to create the analysis tables</li>
+        <li>Check <a href="{{ base_url }}api/v1/health">/api/v1/health</a></li>
+        <li>POST your logs to <a href="{{ base_url }}api/v1/analyze">/api/v1/analyze</a></li>
+        <li>See <code>README.md</code> for the DBSCAN pipeline and parameters</li>
+    </ol>
+</div>
+{% endblock %}
