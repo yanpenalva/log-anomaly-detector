@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS log_entries (
     hour INTEGER NOT NULL,
     is_anomaly INTEGER NOT NULL DEFAULT 0,
     cluster INTEGER,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (analysis_run_id)
+        REFERENCES analysis_runs (id)
+        ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_log_entries_run_id

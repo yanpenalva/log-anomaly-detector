@@ -1,6 +1,6 @@
 {
-    "name": "log-anomaly-detector/php-log-anomaly-detector",
-    "description": "HTTP log anomaly detection with Flight PHP, PHP-ML (DBSCAN) and SQLite",
+    "name": "yanpenalva/log-anomaly-detector",
+    "description": "Unsupervised anomaly detection for HTTP logs using PHP, Flight, PHP-ML and DBSCAN.",
     "keywords": [
         "flightphp",
         "php-ml",
@@ -9,27 +9,19 @@
         "machine-learning",
         "sqlite"
     ],
-    "homepage": "https://docs.flightphp.com",
     "license": "MIT",
-    "authors": [
-        {
-            "name": "n0nag0n",
-            "email": "n0nag0n@sky-9.com",
-            "role": "lead"
-        }
-    ],
     "require": {
-        "php": "^7.4 || ^8.0",
+        "php": "^8.4",
         "ext-json": "*",
         "ext-pdo": "*",
-        "flightphp/active-record": "^0.7",
         "flightphp/core": "^3.18",
         "flightphp/runway": "^1.2",
-        "flightphp/session": "^0.3",
         "level-2/dice": "^4.0",
         "php-ai/php-ml": "^0.10.0",
         "tracy/tracy": "^2.9",
-        "twig/twig": "^2.15 || ^3.0"
+        "twig/twig": "^2.15 || ^3.0",
+        "ext-mbstring": "*",
+        "ext-pdo_sqlite": "*"
     },
     "require-dev": {
         "flightphp/tracy-extensions": "^0.1 || ^0.2",
@@ -68,5 +60,6 @@
             "@php -r \"if (!file_exists('.runway-config.json')) { file_put_contents('.runway-config.json', json_encode(['index_root' => 'public/index.php', 'app_root' => 'app/'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL); }\"",
             "@php -r \"@mkdir('app/cache', 0775, true); @mkdir('app/cache/twig', 0775, true); @mkdir('app/log', 0775, true);\""
         ]
-    }
+    },
+    "type": "project"
 }

@@ -6,18 +6,26 @@
     <title>{% block title %}log-anomaly-detector{% endblock %}</title>
     <style nonce="{{ csp_nonce }}">
         :root {
-            --bg: #0f1419;
-            --panel: #1a2332;
+            --bg: #0b0f17;
+            --panel: #131a26;
+            --panel-2: #1a2332;
             --text: #e7ecf3;
             --muted: #8b9bb4;
             --accent: #3d8bfd;
-            --border: #2a3548;
+            --accent-2: #7c3aed;
+            --ok: #2ea36b;
+            --warn: #e3b341;
+            --bad: #e5534b;
+            --border: #26314a;
         }
         * { box-sizing: border-box; }
         body {
             margin: 0;
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-            background: var(--bg);
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background:
+                radial-gradient(1200px 500px at 80% -10%, rgba(124, 58, 237, .18), transparent),
+                radial-gradient(900px 400px at 10% -10%, rgba(61, 139, 253, .15), transparent),
+                var(--bg);
             color: var(--text);
             line-height: 1.5;
             min-height: 100vh;
@@ -30,39 +38,144 @@
             display: flex;
             gap: 1.5rem;
             align-items: center;
-            background: var(--panel);
+            background: rgba(19, 26, 38, .8);
+            backdrop-filter: blur(6px);
+            position: sticky;
+            top: 0;
+            z-index: 10;
         }
-        header .brand { font-weight: 700; letter-spacing: 0.02em; }
-        header nav { display: flex; gap: 1rem; font-size: 0.95rem; }
-        main { max-width: 720px; margin: 2rem auto; padding: 0 1.5rem; }
+        header .brand { font-weight: 700; letter-spacing: .02em; }
+        header .brand span { color: var(--accent); }
+        header nav { display: flex; gap: 1rem; font-size: .95rem; }
+        main { max-width: 1080px; margin: 2rem auto; padding: 0 1.5rem; }
         .card {
             background: var(--panel);
             border: 1px solid var(--border);
-            border-radius: 10px;
+            border-radius: 14px;
             padding: 1.5rem;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
         }
-        h1 { margin-top: 0; font-size: 1.75rem; }
-        .muted { color: var(--muted); font-size: 0.9rem; }
-        code {
+        .card h2 { margin-top: 0; font-size: 1.15rem; }
+        h1 { margin: .2em 0; font-size: 1.6rem; }
+        .muted { color: var(--muted); font-size: .9rem; }
+        .grid { display: grid; gap: 1.25rem; }
+        .grid.cols-2 { grid-template-columns: 1.2fr .8fr; }
+        @media (max-width: 860px) { .grid.cols-2 { grid-template-columns: 1fr; } }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .stat {
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem 1.2rem;
+        }
+        .stat .value { font-size: 2rem; font-weight: 700; }
+        .stat .label { color: var(--muted); font-size: .85rem; display: flex; align-items: center; gap: .4rem; }
+        .stat.anomalies .value { color: var(--bad); }
+        .stat.clusters .value { color: var(--accent); }
+        textarea, input[type="number"] {
+            width: 100%;
+            background: #0d1420;
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: .7rem .8rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: .85rem;
+        }
+        textarea { min-height: 220px; resize: vertical; }
+        input[type="number"] { width: 130px; }
+        button {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            color: #fff;
+            border: 0;
+            border-radius: 8px;
+            padding: .65rem 1.4rem;
+            font-size: .95rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button:disabled { opacity: .5; cursor: wait; }
+        button.ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-weight: 400;
+            padding: .45rem .9rem;
+        }
+        button.ghost:hover { color: var(--text); border-color: var(--accent); }
+        .row { display: flex; gap: .8rem; align-items: end; flex-wrap: wrap; }
+        .field { display: flex; flex-direction: column; gap: .3rem; }
+        .field label { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: .4rem; }
+        table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+        th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--border); }
+        th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+        tbody tr:hover { background: rgba(61, 139, 253, .06); }
+        code, pre {
             background: #0b1018;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
-            font-size: 0.9em;
+            border-radius: 6px;
+            font-size: .85em;
         }
+        code { padding: .15rem .4rem; }
+        .badge {
+            display: inline-block;
+            padding: .1rem .55rem;
+            border-radius: 999px;
+            font-size: .75rem;
+            font-weight: 600;
+        }
+        .badge.noise { background: rgba(229, 83, 75, .15); color: var(--bad); }
+        .badge.ok { background: rgba(46, 163, 107, .15); color: var(--ok); }
+        .badge.run { background: rgba(61, 139, 253, .15); color: var(--accent); }
+        .alert {
+            border-radius: 10px;
+            padding: .8rem 1rem;
+            margin-bottom: 1rem;
+            font-size: .9rem;
+            display: none;
+        }
+        .alert.error { background: rgba(229, 83, 75, .12); border: 1px solid rgba(229, 83, 75, .4); color: #ffb3ae; }
+        .alert.info { background: rgba(61, 139, 253, .1); border: 1px solid rgba(61, 139, 253, .35); color: #a9c9fb; }
+        .tooltip { position: relative; cursor: help; color: var(--muted); border: 1px solid var(--border); border-radius: 50%; width: 1.1rem; height: 1.1rem; display: inline-flex; align-items: center; justify-content: center; font-size: .7rem; }
+        .tooltip .tip {
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity .12s ease;
+            position: absolute;
+            bottom: 135%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #0b1018;
+            border: 1px solid var(--accent);
+            color: var(--text);
+            padding: .55rem .75rem;
+            border-radius: 8px;
+            font-size: .78rem;
+            font-weight: 400;
+            line-height: 1.45;
+            width: 280px;
+            z-index: 20;
+            text-align: left;
+        }
+        .tooltip:hover .tip { visibility: visible; opacity: 1; }
+        .hidden { display: none; }
+        footer { text-align: center; color: var(--muted); font-size: .85rem; padding: 2rem 0; }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
     <header>
-        <div class="brand">log-anomaly-detector</div>
+        <div class="brand">log<span>-anomaly-</span>detector</div>
         <nav>
-            <a href="{{ base_url }}">Home</a>
+            <a href="{{ base_url }}">Dashboard</a>
             <a href="{{ base_url }}api/v1/health">Health</a>
         </nav>
     </header>
     <main>
         {% block body %}{% endblock %}
     </main>
+    <footer>
+        DBSCAN (PHP-ML) · Flight PHP · SQLite — noise points are anomalies; no confidence scores, by design.
+    </footer>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

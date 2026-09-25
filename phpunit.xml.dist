@@ -5,7 +5,7 @@
          colors="true"
          cacheResult="false">
     <testsuites>
-        <testsuite name="Flight Skeleton">
+        <testsuite name="Log Anomaly Detector">
             <directory>tests</directory>
         </testsuite>
     </testsuites>

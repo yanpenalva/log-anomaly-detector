@@ -48,12 +48,24 @@ final class DatabaseFactory
             PDO::ATTR_EMULATE_PREPARES => false,
         ];
 
-        return new SimplePdo(
+        return self::bootConnection(new SimplePdo(
             $dsn,
             $user !== null && $user !== '' ? (string) $user : null,
             $password !== null ? (string) $password : null,
             $options
-        );
+        ), $driver);
+    }
+
+    /**
+     * Connection-level setup applied once, never in repositories.
+     */
+    private static function bootConnection(SimplePdo $pdo, string $driver): SimplePdo
+    {
+        if ($driver === 'sqlite') {
+            $pdo->exec('PRAGMA foreign_keys = ON');
+        }
+
+        return $pdo;
     }
 
     private static function buildDsn(Config $config, string $driver): string

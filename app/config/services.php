@@ -15,12 +15,14 @@
  */
 
 use App\Application\Anomaly\AnalyzeLogs;
+use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\AnalysisRunRepository;
 use App\Domain\Anomaly\FeatureExtractor;
 use App\Domain\Anomaly\LogEntryRepository;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
+use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
 use App\Utils\Config;
@@ -29,7 +31,6 @@ use Dice\Dice;
 use flight\database\SimplePdo;
 use flight\debug\tracy\TracyExtensionLoader;
 use flight\Engine;
-use flight\Session;
 use Tracy\Debugger;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
@@ -102,38 +103,21 @@ $app->map('render', function (string $template, array $data = []) use ($app, $tw
 });
 
 // ---------------------------------------------------------------------------
-// Session (flightphp/session)
-// ---------------------------------------------------------------------------
-$sessionOptions = [
-    'prefix' => (string) $config->get('session.prefix', 'flight_sess_'),
-    'auto_commit' => true,
-];
-$savePath = $config->get('session.save_path');
-if ($savePath !== null && $savePath !== '') {
-    $sessionOptions['save_path'] = (string) $savePath;
-}
-// Defer session start on CLI
-if (PHP_SAPI === 'cli') {
-    $sessionOptions['start_session'] = false;
-}
-$session = new Session($sessionOptions);
-
-// ---------------------------------------------------------------------------
 // Anomaly detection pipeline (requires SimplePdo for persistence)
 // ---------------------------------------------------------------------------
 $anomalySubstitutions = [];
 if ($db instanceof SimplePdo) {
     $encoder = new LogCategoricalEncoder(
-        (int) $config->get('anomaly.endpoint_hash_buckets', 8)
+        (int) $config->get('anomaly.endpoint_hash_buckets', 16)
     );
     $anomalySubstitutions[AnalysisRunRepository::class] = new SqliteAnalysisRunRepository($db);
     $anomalySubstitutions[LogEntryRepository::class] = new SqliteLogEntryRepository($db);
+    $anomalySubstitutions[AnalysisResultRepository::class] = new SqliteAnalysisResultRepository($db);
     $anomalySubstitutions[AnalyzeLogs::class] = new AnalyzeLogs(
         new FeatureExtractor($encoder),
         new MinMaxNormalizer(),
         new PhpMlDetectorFactory(),
-        $anomalySubstitutions[AnalysisRunRepository::class],
-        $anomalySubstitutions[LogEntryRepository::class]
+        $anomalySubstitutions[AnalysisResultRepository::class]
     );
 }
 
@@ -147,7 +131,6 @@ $substitutions = [
     Engine::class => $app,
     Config::class => $config,
     Environment::class => $twig,
-    Session::class => $session,
 ];
 
 if ($db instanceof SimplePdo) {
@@ -163,7 +146,6 @@ $container = $container->addRule('*', [
 // Shared rules for classes resolved by name (belt + suspenders)
 $container = $container->addRule(Config::class, ['shared' => true]);
 $container = $container->addRule(Environment::class, ['shared' => true]);
-$container = $container->addRule(Session::class, ['shared' => true]);
 if ($db instanceof SimplePdo) {
     $container = $container->addRule(SimplePdo::class, ['shared' => true]);
 }

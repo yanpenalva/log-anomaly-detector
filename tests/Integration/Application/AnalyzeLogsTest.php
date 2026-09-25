@@ -2,39 +2,43 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit\Application;
+namespace Tests\Integration\Application;
 
 use App\Application\Anomaly\AnalyzeLogs;
+use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\DbscanParameters;
+use App\Domain\Anomaly\FeatureExtractor;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\HttpMethod;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
-use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
+use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
 use PHPUnit\Framework\TestCase;
-use Tests\Unit\Support\TestDatabase;
+use Tests\Integration\Support\TestDatabase;
 
 class AnalyzeLogsTest extends TestCase
 {
     private AnalyzeLogs $useCase;
 
-    private string $dbPath;
-
     private SqliteLogEntryRepository $logEntries;
+
+    private AnalysisResultRepository $results;
+
+    private string $dbPath;
 
     protected function setUp(): void
     {
         $database = TestDatabase::create();
         $this->dbPath = $database->path;
         $this->logEntries = new SqliteLogEntryRepository($database->pdo);
+        $this->results = new SqliteAnalysisResultRepository($database->pdo);
         $this->useCase = new AnalyzeLogs(
-            new \App\Domain\Anomaly\FeatureExtractor(new LogCategoricalEncoder(16)),
+            new FeatureExtractor(new LogCategoricalEncoder(16)),
             new MinMaxNormalizer(),
             new PhpMlDetectorFactory(),
-            new SqliteAnalysisRunRepository($database->pdo),
-            $this->logEntries
+            $this->results
         );
     }
 
@@ -46,9 +50,9 @@ class AnalyzeLogsTest extends TestCase
     }
 
     /**
-     * Two dense blobs (different endpoint+verb+timing) and three identical
-     * far-away scanner probes. Geometry is deterministic: 2 clusters,
-     * exactly the 3 probes as noise.
+     * Two dense blobs (different endpoint+verb+timing) and three far-away
+     * scanner probes. Geometry is deterministic: 2 clusters, exactly the
+     * 3 probes as noise.
      *
      * @return list<HttpLogEntry>
      */
@@ -84,7 +88,6 @@ class AnalyzeLogsTest extends TestCase
             self::assertNull($anomaly->cluster);
         }
 
-        // noise entries must be clustered with their own blob
         $usersCluster = $result->classified[0]->cluster;
         self::assertNotNull($usersCluster);
         for ($i = 1; $i < 30; $i++) {
@@ -94,7 +97,7 @@ class AnalyzeLogsTest extends TestCase
         self::assertNotSame($usersCluster, $result->classified[30]->cluster);
     }
 
-    public function testExecutePersistsRunAndEntries(): void
+    public function testExecutePersistsRunAndEntriesAtomically(): void
     {
         $result = $this->useCase->execute(DbscanParameters::fromRaw(0.5, 5), $this->entries());
         $runId = $result->runId ?? 0;

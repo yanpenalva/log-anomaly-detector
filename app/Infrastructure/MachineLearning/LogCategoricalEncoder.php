@@ -24,8 +24,7 @@ final readonly class LogCategoricalEncoder implements CategoricalEncoder
     public const MAX_BUCKETS = 256;
     private const ACTIVE_FEATURE = 1.0;
     private const INACTIVE_FEATURE = 0.0;
-    private const ENDPOINT_PLACEHOLDER = '{n}';
-    private const NUMERIC_SEGMENT_PATTERN = '/\d+/';
+    private const NUMERIC_SEGMENT_PLACEHOLDER = '{n}';
 
     /** @var list<string> */
     private array $methodValues;
@@ -74,11 +73,25 @@ final readonly class LogCategoricalEncoder implements CategoricalEncoder
     }
 
     /**
-     * Collapse parameterized path segments so parameterized URLs share a
-     * bucket instead of fragmenting density: /users/1912 → /users/{n}.
+     * Deterministic endpoint normalization for hashing:
+     *  - drops the query string (/products?page=2 → /products) so query
+     *    parameters never fragment equivalent endpoints;
+     *  - replaces only segments whose ENTIRE content is numeric with {n}
+     *    (/users/1912 → /users/{n}), keeping versioned paths intact
+     *    (/v2/users, /oauth2/callback are untouched).
      */
     public static function normalizeEndpoint(string $endpoint): string
     {
-        return (string) preg_replace(self::NUMERIC_SEGMENT_PATTERN, self::ENDPOINT_PLACEHOLDER, $endpoint);
+        $path = parse_url($endpoint, PHP_URL_PATH);
+        $path = is_string($path) && $path !== '' ? $path : $endpoint;
+
+        $segments = array_map(
+            static fn (string $segment): string => ctype_digit($segment)
+                ? self::NUMERIC_SEGMENT_PLACEHOLDER
+                : $segment,
+            explode('/', $path)
+        );
+
+        return implode('/', $segments);
     }
 }

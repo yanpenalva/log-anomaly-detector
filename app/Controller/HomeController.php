@@ -4,37 +4,20 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
-use App\Utils\Config;
 use flight\Engine;
 
 /**
- * Welcome page controller — canonical controller example for the skeleton.
- *
- * No Flight:: facade. No $_ENV. Inject what you need.
+ * Renders the analysis dashboard (the only HTML surface; everything else
+ * is the JSON API under /api/v1).
  */
-class HomeController
+final readonly class HomeController
 {
-    /** @var Engine */
-    private $app;
-
-    /** @var Config */
-    private $config;
-
-    /**
-     * @param Engine $app
-     */
-    public function __construct(Engine $app, Config $config)
+    public function __construct(private readonly Engine $app)
     {
-        $this->app = $app;
-        $this->config = $config;
     }
 
     public function index(): void
     {
-        $this->app->render('welcome', [
-            'message' => 'You are gonna do great things!',
-            'env' => $this->config->env(),
-            'debug' => $this->config->isDebug(),
-        ]);
+        $this->app->render('dashboard');
     }
 }

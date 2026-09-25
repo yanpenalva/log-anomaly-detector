@@ -9,7 +9,7 @@ Read root [AGENTS.md](../../AGENTS.md) first. Security: [SECURITY.md](../../SECU
 | `bootstrap.php` | Load env, merge config, create Config, set flight.*, require services + routes, `$app->start()` |
 | `config_sample.php` | **Literal** defaults committed to git (template for create-project) |
 | `config.php` | Local copy (gitignored) — literals only |
-| `services.php` | Tracy, SimplePdo, Twig, Session, Dice + container handler |
+| `services.php` | Tracy, SimplePdo, Twig, Dice + container handler |
 | `routes.php` | All HTTP routes |
 
 ## Nuances (easy to get wrong)

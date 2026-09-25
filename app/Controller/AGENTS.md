@@ -14,8 +14,8 @@ HTTP action classes. One public method per route action (or a small coherent set
 4. **Views:** `$this->app->render('template', $data)` — Twig is already mapped. Template name may omit `.twig`. Do not use Flight’s old PHP view engine API for new pages.
 5. **JSON:** `$this->app->json($payload, $status)` (optional pretty-print args per core docs). Prefer this over `echo json_encode`.
 6. **404 / early exit:** `$this->app->halt($code, $message)` or return after setting response. For APIs, JSON error body + status is fine.
-7. **Constructor injection only** for dependencies (`Config`, `SimplePdo`, `Session`, etc.). Register shared services in `app/config/services.php`.
-8. **Models:** inject `SimplePdo`, then `new Post($this->db)` (or inject a factory later). Do not invent a static `Model::find()` base class.
+7. **Constructor injection only** for dependencies (`Config`, `SimplePdo`, repositories, use cases). Shared services are wired in `app/config/services.php`.
+8. **Data access:** inject domain repository interfaces (`AnalysisRunRepository`, …) — never raw SQL in controllers.
 9. **No `$_ENV`.** Use injected `App\Utils\Config`.
 10. **Routes stay in `app/config/routes.php`.** Controllers do not register their own routes.
 
@@ -51,6 +51,6 @@ Wire: `$router->get('/example', [ExampleController::class, 'index']);`
 
 ## Do not
 
-- Put SQL strings with unescaped input in the controller (use SimplePdo params / ActiveRecord).
-- Start sessions with raw `session_start()` / `$_SESSION` (use injected Session).
+- Put SQL strings or ML logic in controllers — call repositories / use cases.
+- Accept filesystem paths from clients (inline logs only).
 - Add Laravel-style FormRequest / middleware attributes — this is Flight.

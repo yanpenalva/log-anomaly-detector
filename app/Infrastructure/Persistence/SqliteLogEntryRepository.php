@@ -7,53 +7,17 @@ namespace App\Infrastructure\Persistence;
 use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\LogEntryRepository;
-use DateTimeImmutable;
 use flight\database\SimplePdo;
 use flight\util\Collection;
-use Throwable;
 
+/**
+ * Read-side log entry queries. Writes belong to the atomic
+ * SqliteAnalysisResultRepository.
+ */
 final readonly class SqliteLogEntryRepository implements LogEntryRepository
 {
-    private const TIMESTAMP_FORMAT = DATE_ATOM;
-
     public function __construct(private readonly SimplePdo $db)
     {
-    }
-
-    public function insertMany(int $runId, array $entries): void
-    {
-        $statement = $this->db->prepare(
-            'INSERT INTO log_entries
-                (analysis_run_id, method, endpoint, status_code, response_time, request_size, hour,
-                 is_anomaly, cluster, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        );
-
-        $createdAt = (new DateTimeImmutable('now'))->format(self::TIMESTAMP_FORMAT);
-
-        $this->db->beginTransaction();
-        try {
-            foreach ($entries as $classified) {
-                $statement->execute([
-                    $runId,
-                    $classified->entry->method->value,
-                    $classified->entry->endpoint,
-                    $classified->entry->statusCode,
-                    $classified->entry->responseTime,
-                    $classified->entry->requestSize,
-                    $classified->entry->hour,
-                    $classified->isAnomaly ? 1 : 0,
-                    $classified->cluster,
-                    $createdAt,
-                ]);
-            }
-            $this->db->commit();
-        } catch (Throwable $e) {
-            if ($this->db->inTransaction()) {
-                $this->db->rollBack();
-            }
-            throw $e;
-        }
     }
 
     public function anomaliesForRun(int $runId, int $limit = 100): array
@@ -67,25 +31,10 @@ final readonly class SqliteLogEntryRepository implements LogEntryRepository
             [$runId, max(1, $limit)]
         );
 
-        $anomalies = [];
-        foreach ($rows as $row) {
-            $data = $row instanceof Collection ? $row->getData() : (array) $row;
-            $cluster = $data['cluster'];
-            $anomalies[] = new ClassifiedLogEntry(
-                HttpLogEntry::fromArray([
-                    'method' => (string) $data['method'],
-                    'endpoint' => (string) $data['endpoint'],
-                    'status_code' => (int) $data['status_code'],
-                    'response_time' => (float) $data['response_time'],
-                    'request_size' => (int) $data['request_size'],
-                    'hour' => (int) $data['hour'],
-                ]),
-                $cluster === null ? null : (int) $cluster,
-                true
-            );
-        }
-
-        return $anomalies;
+        return array_map(
+            fn (mixed $row): ClassifiedLogEntry => $this->hydrateAnomaly($this->rowToArray($row)),
+            is_array($rows) ? $rows : iterator_to_array($rows)
+        );
     }
 
     public function countForRun(int $runId): int
@@ -93,6 +42,39 @@ final readonly class SqliteLogEntryRepository implements LogEntryRepository
         return (int) $this->db->fetchField(
             'SELECT COUNT(*) FROM log_entries WHERE analysis_run_id = ?',
             [$runId]
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function rowToArray(mixed $row): array
+    {
+        if ($row instanceof Collection) {
+            return $row->getData();
+        }
+
+        return (array) $row;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function hydrateAnomaly(array $data): ClassifiedLogEntry
+    {
+        $cluster = $data['cluster'];
+
+        return new ClassifiedLogEntry(
+            HttpLogEntry::fromArray([
+                'method' => (string) $data['method'],
+                'endpoint' => (string) $data['endpoint'],
+                'status_code' => (int) $data['status_code'],
+                'response_time' => (float) $data['response_time'],
+                'request_size' => (int) $data['request_size'],
+                'hour' => (int) $data['hour'],
+            ]),
+            $cluster === null ? null : (int) $cluster,
+            true
         );
     }
 }

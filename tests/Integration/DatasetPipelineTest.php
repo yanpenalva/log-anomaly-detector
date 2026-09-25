@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit;
+namespace Tests\Integration;
 
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Domain\Anomaly\DbscanParameters;
@@ -11,10 +11,10 @@ use App\Infrastructure\Log\CsvHttpLogLoader;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
-use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
+use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
 use PHPUnit\Framework\TestCase;
-use Tests\Unit\Support\TestDatabase;
+use Tests\Integration\Support\TestDatabase;
 
 /**
  * End-to-end pipeline over the committed deterministic development
@@ -38,8 +38,7 @@ class DatasetPipelineTest extends TestCase
                 new FeatureExtractor(new LogCategoricalEncoder(16)),
                 new MinMaxNormalizer(),
                 new PhpMlDetectorFactory(),
-                new SqliteAnalysisRunRepository($database->pdo),
-                new SqliteLogEntryRepository($database->pdo)
+                new SqliteAnalysisResultRepository($database->pdo)
             );
 
             $result = $useCase->execute(DbscanParameters::fromRaw(0.35, 5), $entries);
@@ -53,10 +52,9 @@ class DatasetPipelineTest extends TestCase
             self::assertGreaterThanOrEqual(10, $result->anomalyCount);
             self::assertLessThanOrEqual(80, $result->anomalyCount);
 
-            // anomalies persisted
-            self::assertCount(
+            self::assertSame(
                 $result->anomalyCount,
-                (new SqliteLogEntryRepository($database->pdo))->anomaliesForRun($result->runId ?? 0, 200)
+                count((new SqliteLogEntryRepository($database->pdo))->anomaliesForRun($result->runId ?? 0, 200))
             );
         } finally {
             if (is_file($database->path)) {

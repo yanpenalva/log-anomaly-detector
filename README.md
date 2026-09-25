@@ -2,13 +2,13 @@
 
 # php-log-anomaly-detector
 
-**Unsupervised anomaly detection for HTTP traffic logs — built for studying classic Machine Learning in PHP.**
+**Unsupervised anomaly detection for HTTP traffic logs — classic Machine Learning, in PHP.**
 
+[![CI](https://github.com/yanpenalva/log-anomaly-detector/actions/workflows/ci.yml/badge.svg)](https://github.com/yanpenalva/log-anomaly-detector/actions/workflows/ci.yml)
 [![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?logo=php&logoColor=white)](https://www.php.net)
 [![Flight PHP](https://img.shields.io/badge/Flight%20PHP-v3-2EA043)](https://flightphp.com)
 [![PHP-ML](https://img.shields.io/badge/PHP--ML-0.10-D9534F)](https://php-ai.com)
-[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)]
-[![Tests](https://img.shields.io/badge/tests-102%20passing-2EA043)](#testing)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://sqlite.org)
 [![PHPStan](https://img.shields.io/badge/PHPStan-level%208-8B5CF6)](phpstan.neon.dist)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -16,10 +16,10 @@
 
 ---
 
-A hands-on project for studying **classic machine learning** end to end: dataset preparation,
-feature engineering, categorical encoding, normalization, density-based clustering
-(**DBSCAN**), persistence, testing, and a decoupled architecture — all in PHP, with
-**PHP-ML** encapsulated behind domain ports.
+A hands-on study project covering **classic machine learning** end to end: dataset
+preparation, feature engineering, categorical encoding, normalization, density-based
+clustering (**DBSCAN**), atomic persistence, testing, CI, and a decoupled architecture —
+with **PHP-ML** fully encapsulated behind domain ports.
 
 ## Pipeline
 
@@ -45,14 +45,20 @@ Flight API
 > **noise point** — a record too sparse to belong to any cluster — is reported as an
 > **anomaly**. No invented confidence scores: `{"anomaly": true}` means exactly that.
 
+## Dashboard
+
+Serving the app opens a built-in dashboard (`/`): paste logs, tune epsilon /
+minimum samples, run the analysis, inspect anomalies and browse persisted runs.
+Tooltips explain every concept (core points, noise, epsilon, hashing).
+
 ## Architecture
 
-Flight stays a thin HTTP entry point. No ML rules in routes or controllers — the domain
+Flight is a thin HTTP entry point. No ML rules in routes or controllers — the domain
 never imports `Phpml\`.
 
 ```text
 app/
-├── Application/Anomaly/       # AnalyzeLogs use case (full pipeline orchestration)
+├── Application/Anomaly/       # AnalyzeLogs use case (pipeline orchestration)
 ├── Domain/Anomaly/            # HttpLogEntry, FeatureVector, DbscanParameters,
 │                              # DetectionResult, AnalysisResult + ports
 ├── Infrastructure/
@@ -63,11 +69,6 @@ app/
 ├── Controller/Api/            # HealthController, AnalysisController (thin actions)
 ├── config/                    # bootstrap, services (Dice DI), routes
 └── Utils/                     # Config, Env, DatabaseFactory
-
-migrations/                    # plain SQL via `php runway migrate`
-datasets/                      # development.csv (deterministic, seed 42)
-scripts/generate_dataset.php   # dataset generator
-tests/                         # PHPUnit — unit + pipeline integration
 ```
 
 | Layer boundary | Rule |
@@ -76,11 +77,19 @@ tests/                         # PHPUnit — unit + pipeline integration
 | Controller → SQL | blocked — repositories only |
 | API → filesystem paths | blocked — inline logs only |
 | Encoder / normalizer state | fitted once per batch, reused — never recomputed per record |
+| Run + entries persistence | atomic — single transaction via `AnalysisResultRepository` |
+
+## Requirements
+
+- **PHP 8.4+** with `pdo`, `pdo_sqlite`, `mbstring`, `json`
+- Composer 2
+
+Or use Docker (no host PHP required): `docker compose up --build` → `http://localhost:8000`.
 
 ## Getting started
 
 ```bash
-composer install               # dependencies (Flight, PHP-ML, SQLite via PDO)
+composer install               # dependencies (Flight, PHP-ML, Twig, Tracy)
 cp .env.example .env           # DB_DRIVER=sqlite
 php runway migrate             # creates analysis_runs + log_entries
 composer start                 # php -S localhost:8000 -t public
@@ -91,13 +100,18 @@ Fresh database at any time: delete `database.sqlite`, run `php runway migrate`.
 ## Testing
 
 ```bash
-composer test                  # PHPUnit — 102 tests, deterministic
+composer test                  # PHPUnit — deterministic suite
 composer analyse               # PHPStan level 8
 composer check                 # both
 ```
 
-ML tests use fixed datasets; the development dataset is generated with a fixed seed,
-so clustering results are fully reproducible.
+| Suite | Contents |
+|---|---|
+| `tests/Unit/` | isolated: domain objects, extractor, encoder, normalizer, geometry, CSV parser, feature geometry |
+| `tests/Integration/` | real SQLite + real migrations: repositories, atomic persistence, FK/cascade, full pipeline, API controllers |
+
+CI runs on every push/PR (`.github/workflows/ci.yml`): `composer validate --strict` →
+install → tests → PHPStan, on PHP 8.4 with Composer caching.
 
 ## Dataset
 
@@ -115,13 +129,13 @@ own cluster:
 
 ## Feature engineering
 
-One vector per log entry — fixed layout, **29 dimensions**:
+One vector per log entry — fixed layout, **33 dimensions**:
 
 | Block | Dims | Strategy |
 |---|---|---|
 | `method` | 9 | **one-hot** over a fixed HTTP verb enum — no fake ordinals |
-| `endpoint` | 16 | **feature hashing** (`crc32 % 16`) after normalizing paths (`/users/1912` → `/users/{n}`) — deterministic, tolerates unseen categories |
-| `status_code` | 1 | raw numeric |
+| `endpoint` | 16 | **feature hashing** (`crc32 % 16`); paths normalized first: query string dropped, only fully-numeric segments become `{n}` (`/users/1912` → `/users/{n}`; `/v2/users` and `/oauth2/callback` stay intact) |
+| `status_code` | 5 | **one-hot HTTP class** (`status_1xx` … `status_5xx`) — raw codes are categories, not quantities; a Euclidean metric over raw codes would imply fake relations (404 vs 500) |
 | `response_time` | 1 | raw numeric (ms) |
 | `request_size` | 1 | raw numeric (bytes) |
 | `hour` | 1 | raw numeric (0–23) |
@@ -153,12 +167,26 @@ Semantics — exactly how the algorithm works:
 > reconstructs assignments via multiset matching — identical vectors always receive
 > identical labels, so consumption in dataset order is unambiguous.
 
+### Feature geometry (locked by tests)
+
+The categorical blocks dominate Euclidean distances by design — this is what makes
+profiles separate. `FeatureGeometryTest` locks the behavior:
+
+| Scenario | Distance vs epsilon (0.5) |
+|---|---|
+| same endpoint + same method + numeric jitter | **inside** epsilon → neighbors |
+| same request, different endpoint bucket | √2 → **outside** epsilon |
+| same endpoint, different HTTP method | √2 → **outside** epsilon |
+| same status class (200 vs 201) / different class (200 vs 500) | inside / **outside** epsilon |
+
+Do not add weights, custom distances, or a new epsilon without evidence.
+
 ## API
 
 | Method | Route | Description |
 |---|---|---|
 | `GET` | `/api/v1/health` | liveness |
-| `POST` | `/api/v1/analyze` | batch analysis + persistence |
+| `POST` | `/api/v1/analyze` | batch analysis + atomic persistence |
 | `GET` | `/api/v1/analysis` | recent runs (`?limit=1..200`) |
 | `GET` | `/api/v1/analysis/{id}` | run detail + anomalies (capped, with `anomalies_truncated`) |
 | `POST` | `/api/v1/detect` | **501** — see [Limitations](#limitations) |
@@ -188,13 +216,16 @@ The API **never** accepts a file path — inline logs only.
 
 ## Persistence
 
-SQLite via `flight\database\SimplePdo` (PDO) and prepared statements. No ORM, no
-serialized arrays, no `models` table (there is no trained model state to persist).
+SQLite via `flight\database\SimplePdo` (PDO), prepared statements, `PRAGMA foreign_keys = ON`
+set once at connection creation. No ORM, no serialized arrays, no `models` table.
 
 | Table | Columns |
 |---|---|
 | `analysis_runs` | `id, algorithm, epsilon, minimum_samples, sample_count, cluster_count, anomaly_count, started_at, finished_at` |
-| `log_entries` | `id, analysis_run_id, method, endpoint, status_code, response_time, request_size, hour, is_anomaly, cluster (NULL = noise), created_at` |
+| `log_entries` | `id, analysis_run_id (FK → analysis_runs ON DELETE CASCADE), method, endpoint, status_code, response_time, request_size, hour, is_anomaly, cluster (NULL = noise), created_at` |
+
+Run + entries are written inside a single transaction (`AnalysisResultRepository::save`);
+a failure mid-write leaves no orphan `analysis_runs` row (locked by test).
 
 ## Limitations
 
@@ -210,14 +241,17 @@ serialized arrays, no `models` table (there is no trained model state to persist
 4. **Min-max is outlier-sensitive** (stretches the scale). Z-score or robust scaling are
    natural alternatives.
 5. **Batch-only**: every analysis re-clusters the full input. No incremental learning.
+6. **Exact status code is dropped** after class encoding (2xx/…/5xx). Within one class,
+   404 vs 400 are indistinguishable to the model — deliberate, to avoid ordinal artifacts.
 
 ## Roadmap
 
 - [x] **V1** — boilerplate removal, SQLite, CSV dataset, domain model, feature extraction, encoding, normalization, DBSCAN, tests
 - [x] **V2** — analysis persistence, `/health`, `/analyze`, typed per-endpoint error handling
+- [x] **V2.5** — dashboard, atomic persistence with FK integrity, CI, Docker
 - [ ] **V3** — Nginx access.log parser, batch analysis CLI
 - [ ] **V4** — DBSCAN vs K-Means (and other PHP-ML techniques) compared with metrics that fit each family (density-based vs centroid-based)
-- [ ] **V5** — benchmarking, statistics, visualization, optional dashboard
+- [ ] **V5** — benchmarking, statistics, advanced visualization
 
 ## License
 

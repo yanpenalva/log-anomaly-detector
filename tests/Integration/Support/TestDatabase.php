@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit\Support;
+namespace Tests\Integration\Support;
 
 use App\Command\MigrateCommand;
 use App\Utils\Config;
@@ -11,7 +11,8 @@ use flight\database\SimplePdo;
 
 /**
  * Builds a throwaway SQLite database with the real project migrations
- * applied, so persistence tests run against the actual schema.
+ * applied (including PRAGMA foreign_keys), so integration tests run
+ * against the actual schema.
  */
 final class TestDatabase
 {

@@ -1,16 +1,14 @@
-version: '3.7'
-
 services:
-    flight:
-        image: php:8-alpine
-        working_dir: /var/www
-        command: php -S 0.0.0.0:8080 -t public
-        environment:
-            APP_ENV: development
-            APP_DEBUG: "true"
-            DB_DRIVER: sqlite
-            DB_SQLITE_PATH: /var/www/database.sqlite
-        ports:
-            - "8080:8080"
-        volumes:
-            - .:/var/www
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      DB_DRIVER: sqlite
+      DB_SQLITE_PATH: /app/data/database.sqlite
+    volumes:
+      - sqlite-data:/app/data
+volumes:
+  sqlite-data:

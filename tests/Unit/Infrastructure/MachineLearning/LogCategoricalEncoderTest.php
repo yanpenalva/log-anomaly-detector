@@ -74,10 +74,28 @@ class LogCategoricalEncoderTest extends TestCase
         new LogCategoricalEncoder(0);
     }
 
-    public function testNormalizesNumericSegments(): void
+    public function testNormalizesOnlyFullyNumericSegments(): void
     {
         self::assertSame('/users/{n}', LogCategoricalEncoder::normalizeEndpoint('/users/1912'));
         self::assertSame('/users/{n}/orders/{n}', LogCategoricalEncoder::normalizeEndpoint('/users/42/orders/7'));
+        self::assertSame('/products/{n}/reviews/{n}', LogCategoricalEncoder::normalizeEndpoint('/products/55/reviews/991'));
         self::assertSame('/health', LogCategoricalEncoder::normalizeEndpoint('/health'));
+    }
+
+    public function testKeepsVersionedPathsIntact(): void
+    {
+        self::assertSame('/v2/users', LogCategoricalEncoder::normalizeEndpoint('/v2/users'));
+        self::assertSame('/oauth2/callback', LogCategoricalEncoder::normalizeEndpoint('/oauth2/callback'));
+        self::assertSame('/api/v10/items', LogCategoricalEncoder::normalizeEndpoint('/api/v10/items'));
+    }
+
+    public function testDropsQueryString(): void
+    {
+        self::assertSame('/products', LogCategoricalEncoder::normalizeEndpoint('/products?page=2'));
+        self::assertSame(
+            '/products/{n}',
+            LogCategoricalEncoder::normalizeEndpoint('/products/99?page=2&sort=desc')
+        );
+        self::assertSame('/users', LogCategoricalEncoder::normalizeEndpoint('/users'));
     }
 }

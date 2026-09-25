@@ -30,7 +30,8 @@ class FeatureExtractorTest extends TestCase
         $names = $vector->names();
         $values = $vector->values();
 
-        $expectedDimension = 9 + 8 + 4;
+        // 9 method one-hot + 8 endpoint buckets + 5 status classes + 3 numerics
+        $expectedDimension = 9 + 8 + 5 + 3;
         self::assertCount($expectedDimension, $names);
         self::assertCount($expectedDimension, $values);
 
@@ -44,15 +45,33 @@ class FeatureExtractorTest extends TestCase
         self::assertSame('endpoint_hash_7', $names[16]);
         self::assertSame(1.0, array_sum(array_slice($values, 9, 8)));
 
+        // status class one-hot: 200 → status_2xx (index 18)
+        self::assertSame('status_1xx', $names[17]);
+        self::assertSame('status_2xx', $names[18]);
+        self::assertSame('status_5xx', $names[21]);
+        self::assertSame(1.0, $values[18]);
+        self::assertSame(1.0, array_sum(array_slice($values, 17, 5)));
+
         // numeric tail
-        self::assertSame('status_code', $names[17]);
-        self::assertSame(200.0, $values[17]);
-        self::assertSame('response_time', $names[18]);
-        self::assertSame(118.0, $values[18]);
-        self::assertSame('request_size', $names[19]);
-        self::assertSame(1024.0, $values[19]);
-        self::assertSame('hour', $names[20]);
-        self::assertSame(10.0, $values[20]);
+        self::assertSame('response_time', $names[22]);
+        self::assertSame(118.0, $values[22]);
+        self::assertSame('request_size', $names[23]);
+        self::assertSame(1024.0, $values[23]);
+        self::assertSame('hour', $names[24]);
+        self::assertSame(10.0, $values[24]);
+    }
+
+    public function testStatusClassOneHotCoversAllClasses(): void
+    {
+        foreach ([100, 250, 301, 450, 599] as $i => $status) {
+            $vector = $this->extractor->extract(
+                new HttpLogEntry(HttpMethod::Get, '/x', $status, 1.0, 1, 0)
+            );
+            $slice = array_slice($vector->values(), 17, 5);
+
+            self::assertSame(1.0, $slice[$i], "status $status must activate class index $i");
+            self::assertSame(1.0, array_sum($slice));
+        }
     }
 
     public function testParameterizedEndpointsShareFeatures(): void
@@ -63,7 +82,17 @@ class FeatureExtractorTest extends TestCase
         self::assertSame($a->values(), $b->values());
     }
 
-    public function testDifferentVerbsDifferOnlyInOneHotBlock(): void
+    public function testQueryStringDoesNotChangeFeatures(): void
+    {
+        $plain = $this->extractor->extract(new HttpLogEntry(HttpMethod::Get, '/products', 200, 100.0, 900, 9));
+        $withQuery = $this->extractor->extract(
+            new HttpLogEntry(HttpMethod::Get, '/products?page=2&sort=desc', 200, 100.0, 900, 9)
+        );
+
+        self::assertSame($plain->values(), $withQuery->values());
+    }
+
+    public function testDifferentVerbsDifferOnlyOutsideMethodBlock(): void
     {
         $get = $this->extractor->extract($this->entry());
         $post = $this->extractor->extract(new HttpLogEntry(HttpMethod::Post, '/users', 200, 118.0, 1024, 10));

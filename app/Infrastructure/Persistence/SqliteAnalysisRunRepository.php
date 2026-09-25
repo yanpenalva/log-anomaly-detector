@@ -12,35 +12,13 @@ use flight\database\SimplePdo;
 use flight\util\Collection;
 
 /**
- * SQLite implementation via SimplePdo prepared statements.
+ * Read-side analysis run queries. Writes belong to the atomic
+ * SqliteAnalysisResultRepository.
  */
 final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepository
 {
-    private const TIMESTAMP_FORMAT = DATE_ATOM;
-
     public function __construct(private readonly SimplePdo $db)
     {
-    }
-
-    public function insert(AnalysisRun $run): AnalysisRun
-    {
-        $statement = $this->db->prepare(
-            'INSERT INTO analysis_runs
-                (algorithm, epsilon, minimum_samples, sample_count, cluster_count, anomaly_count, started_at, finished_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        );
-        $statement->execute([
-            $run->algorithm->value,
-            $run->epsilon,
-            $run->minimumSamples,
-            $run->sampleCount,
-            $run->clusterCount,
-            $run->anomalyCount,
-            $run->startedAt->format(self::TIMESTAMP_FORMAT),
-            $run->finishedAt->format(self::TIMESTAMP_FORMAT),
-        ]);
-
-        return $run->withId((int) $this->db->lastInsertId());
     }
 
     public function findById(int $id): ?AnalysisRun
@@ -58,12 +36,10 @@ final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepositor
             [max(1, $limit)]
         );
 
-        $runs = [];
-        foreach ($rows as $row) {
-            $runs[] = $this->hydrate($this->rowToArray($row));
-        }
-
-        return $runs;
+        return array_map(
+            fn (mixed $row): AnalysisRun => $this->hydrate($this->rowToArray($row)),
+            is_array($rows) ? $rows : iterator_to_array($rows)
+        );
     }
 
     /**

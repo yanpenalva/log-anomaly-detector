@@ -26,8 +26,9 @@ composer analyse   # PHPStan level 8
 
 ## Layout
 
-- `tests/Unit/` — default for fast tests
-- Mirror class names: `HomeControllerTest` for `HomeController`
+- `tests/Unit/` — isolated tests: domain objects, feature pipeline pieces, CSV parser (no SQLite)
+- `tests/Integration/` — real SQLite + real migrations: repositories, atomic persistence, full pipeline, API controllers
+- Shared fixture: `tests/Integration/Support/TestDatabase` (temp SQLite + real migrations; unlink in `tearDown`)
 
 ## Do not
 

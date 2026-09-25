@@ -11,7 +11,11 @@ use LogicException;
  *
  * Layout (order is part of the contract with FittedNormalizer and the
  * detector):
- *   [ method one-hot ... ][ endpoint hash buckets ... ][ numeric tail ]
+ *   [ method one-hot ... ][ endpoint hash buckets ... ][ status class one-hot ... ][ numeric tail ]
+ *
+ * Status codes are encoded one-hot by HTTP class (1xx..5xx): the raw code
+ * is a category, not a quantity — a Euclidean metric over raw codes would
+ * imply /v2 vs /oauth2-style fake relations between 404 and 500.
  *
  * Raw numerics are left unscaled here; scaling is the normalizer's job.
  * `hour` is kept as a single linear feature: with min-max + Euclidean
@@ -22,13 +26,17 @@ final readonly class FeatureExtractor
 {
     private const METHOD_FEATURE_PREFIX = 'method_';
     private const ENDPOINT_FEATURE_PREFIX = 'endpoint_hash_';
+    private const STATUS_CLASS_FEATURE_PREFIX = 'status_';
+    private const STATUS_CLASS_COUNT = 5;
+    private const STATUS_CLASS_WIDTH = 100;
+    private const HOUR_FEATURE = 'hour';
 
     /**
      * Numeric feature tail. Order defines vector positions.
      *
      * @var list<string>
      */
-    private const NUMERIC_FEATURES = ['status_code', 'response_time', 'request_size', 'hour'];
+    private const NUMERIC_FEATURES = ['response_time', 'request_size', self::HOUR_FEATURE];
 
     public function __construct(private readonly CategoricalEncoder $encoder)
     {
@@ -40,13 +48,41 @@ final readonly class FeatureExtractor
             [
                 ...$this->encoder->encodeMethod($entry->method),
                 ...$this->encoder->encodeEndpoint($entry->endpoint),
+                ...$this->encodeStatusClass($entry->statusCode),
                 ...$this->numericValues($entry),
             ],
             [
                 ...$this->methodNames(),
                 ...$this->endpointNames(),
+                ...$this->statusClassNames(),
                 ...self::NUMERIC_FEATURES,
             ]
+        );
+    }
+
+    /**
+     * One-hot over HTTP response classes: 200 → status_2xx, 503 → status_5xx.
+     *
+     * @return list<float>
+     */
+    private function encodeStatusClass(int $statusCode): array
+    {
+        $oneHot = array_fill(0, self::STATUS_CLASS_COUNT, 0.0);
+        $class = intdiv($statusCode, self::STATUS_CLASS_WIDTH);
+        $index = min(max($class, 1), self::STATUS_CLASS_COUNT) - 1;
+        $oneHot[$index] = 1.0;
+
+        return $oneHot;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function statusClassNames(): array
+    {
+        return array_map(
+            fn (int $class): string => self::STATUS_CLASS_FEATURE_PREFIX . $class . 'xx',
+            range(1, self::STATUS_CLASS_COUNT)
         );
     }
 
@@ -64,10 +100,9 @@ final readonly class FeatureExtractor
     private function numericValue(string $feature, HttpLogEntry $entry): float
     {
         return match ($feature) {
-            'status_code' => (float) $entry->statusCode,
             'response_time' => $entry->responseTime,
             'request_size' => (float) $entry->requestSize,
-            'hour' => (float) $entry->hour,
+            self::HOUR_FEATURE => (float) $entry->hour,
             default => throw new LogicException(sprintf('Unknown numeric feature "%s"', $feature)),
         };
     }
@@ -78,8 +113,7 @@ final readonly class FeatureExtractor
     private function methodNames(): array
     {
         return array_map(
-            fn (HttpMethod $case): string => self::METHOD_FEATURE_PREFIX
-                . strtolower($case->value),
+            fn (HttpMethod $case): string => self::METHOD_FEATURE_PREFIX . strtolower($case->value),
             HttpMethod::cases()
         );
     }

@@ -1,0 +1,292 @@
+{% extends 'layout.twig' %}
+
+{% block title %}Dashboard — log-anomaly-detector{% endblock %}
+
+{% block body %}
+<div class="card">
+    <h1>Anomaly detection dashboard</h1>
+    <p class="muted">
+        Paste HTTP access logs, run <strong>DBSCAN</strong>, and inspect which requests are
+        <span class="badge noise">noise = anomaly</span> versus
+        <span class="badge ok">clustered = normal</span>.
+        Everything runs locally against SQLite — no data leaves this machine.
+    </p>
+</div>
+
+<div class="grid cols-2">
+    <div class="card">
+        <h2>
+            Run analysis
+            <span class="tooltip">?
+                <span class="tip">Each log is converted to a 33-dimension vector: method (one-hot),
+                endpoint (hash buckets), HTTP status class (one-hot 1xx–5xx) and raw
+                response_time / request_size / hour. Vectors are min-max normalized,
+                then clustered with DBSCAN.</span>
+            </span>
+        </h2>
+
+        <div id="alert" class="alert"></div>
+
+        <div class="field">
+            <label>
+                Logs (JSON array)
+                <span class="tooltip">?
+                    <span class="tip">Array of objects with: method, endpoint, status_code,
+                    response_time (ms), request_size (bytes), hour (0–23).
+                    Max 10,000 logs per request.</span>
+                </span>
+            </label>
+            <textarea id="logs" spellcheck="false"></textarea>
+        </div>
+
+        <div class="row" style="margin-top: .8rem;">
+            <div class="field">
+                <label>
+                    epsilon
+                    <span class="tooltip">?
+                        <span class="tip">Neighborhood radius (Euclidean distance on normalized
+                        vectors). Points closer than epsilon are neighbors.
+                        Bigger = fewer, larger clusters. Range 0.001–1000.</span>
+                    </span>
+                </label>
+                <input type="number" id="epsilon" value="0.35" step="0.05" min="0.001" max="1000">
+            </div>
+            <div class="field">
+                <label>
+                    minimum_samples
+                    <span class="tooltip">?
+                        <span class="tip">Minimum neighbors (including the point itself) inside
+                        epsilon for a point to be a core point. Lower = more sensitive
+                        to small groups. Range 1–10,000.</span>
+                    </span>
+                </label>
+                <input type="number" id="minSamples" value="5" step="1" min="1" max="10000">
+            </div>
+            <button id="analyze">Analyze</button>
+            <button class="ghost" id="loadSample">Load sample logs</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>How anomalies are decided</h2>
+        <p class="muted" style="margin-top: 0;">
+            DBSCAN is <strong>unsupervised</strong>: it never saw labels. A log is an
+            anomaly when it is a <em>noise point</em> — its neighborhood is too sparse to
+            belong to any cluster.
+        </p>
+        <ul class="muted" style="font-size: .88rem; padding-left: 1.2rem;">
+            <li><strong>core point</strong> — ≥ minimum_samples neighbors within epsilon</li>
+            <li><strong>cluster</strong> — core points + everything density-reachable</li>
+            <li><strong>noise</strong> — in no cluster → reported as <code>anomaly</code></li>
+        </ul>
+        <p class="muted" style="font-size: .85rem;">
+            There is intentionally <strong>no confidence score</strong>: DBSCAN does not
+            produce probabilities, and the API does not invent them.
+            <code>POST /api/v1/detect</code> returns 501 for the same reason — DBSCAN has
+            no incremental inference.
+        </p>
+    </div>
+</div>
+
+<div class="card hidden" id="resultCard">
+    <h2>
+        Latest run
+        <span class="badge run" id="runBadge">run #–</span>
+    </h2>
+    <div class="stats">
+        <div class="stat">
+            <div class="value" id="statSamples">–</div>
+            <div class="label">samples
+                <span class="tooltip">?
+                    <span class="tip">Total number of log entries analyzed in this run.</span>
+                </span>
+            </div>
+        </div>
+        <div class="stat clusters">
+            <div class="value" id="statClusters">–</div>
+            <div class="label">clusters
+                <span class="tooltip">?
+                    <span class="tip">Dense traffic patterns found. Each cluster is a group of
+                    requests that are mutually within epsilon of each other (density-reachable).</span>
+                </span>
+            </div>
+        </div>
+        <div class="stat anomalies">
+            <div class="value" id="statAnomalies">–</div>
+            <div class="label">anomalies (noise)
+                <span class="tooltip">?
+                    <span class="tip">Entries that ended up in no cluster. In this domain a
+                    noise point IS the anomaly: its neighborhood is too sparse to be a
+                    known traffic pattern.</span>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <h2 style="margin-top: 1.4rem;">Anomalies</h2>
+    <div id="anomalyTable"></div>
+</div>
+
+<div class="card">
+    <h2>
+        Analysis history
+        <span class="tooltip">?
+            <span class="tip">Every analysis is persisted to SQLite (analysis_runs +
+            log_entries, atomically in one transaction). Click a row to load its
+            anomalies below.</span>
+        </span>
+    </h2>
+    <div id="historyTable"></div>
+</div>
+
+<div class="card hidden" id="detailCard">
+    <h2>Anomalies of run <span class="badge run" id="detailBadge">run #–</span></h2>
+    <div id="detailTable"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+const SAMPLE = {
+    logs: [
+        ...Array.from({length: 12}, (_, i) => ({method: "GET", endpoint: "/users", status_code: 200, response_time: 115 + i, request_size: 1000 + i * 3, hour: 10})),
+        ...Array.from({length: 12}, (_, i) => ({method: "POST", endpoint: "/payments", status_code: 201, response_time: 330 + i, request_size: 1500 + i * 4, hour: 12})),
+        ...Array.from({length: 10}, (_, i) => ({method: "GET", endpoint: "/health", status_code: 200, response_time: 10 + i, request_size: 150 + i, hour: 13})),
+        {method: "GET", endpoint: "/.env", status_code: 404, response_time: 9, request_size: 60, hour: 3},
+        {method: "POST", endpoint: "/payments", status_code: 503, response_time: 5200, request_size: 2100, hour: 14},
+        {method: "POST", endpoint: "/payments", status_code: 500, response_time: 6100, request_size: 2400, hour: 15},
+        {method: "GET", endpoint: "/wp-admin.php", status_code: 404, response_time: 12, request_size: 80, hour: 2}
+    ],
+    epsilon: 0.35,
+    minimum_samples: 5
+};
+
+const $ = (id) => document.getElementById(id);
+
+function alertBox(message, kind = "error") {
+    const el = $("alert");
+    el.className = "alert " + kind;
+    el.textContent = message;
+    el.style.display = "block";
+}
+
+function esc(value) {
+    const div = document.createElement("div");
+    div.textContent = String(value);
+    return div.innerHTML;
+}
+
+function anomaliesTable(anomalies) {
+    if (!anomalies.length) {
+        return '<p class="muted">No anomalies in this run — every log fit a dense cluster.</p>';
+    }
+    const rows = anomalies.map((a) => `
+        <tr>
+            <td><span class="badge noise">noise</span></td>
+            <td><code>${esc(a.method)}</code></td>
+            <td><code>${esc(a.endpoint)}</code></td>
+            <td>${esc(a.status_code)}</td>
+            <td>${esc(a.response_time)} ms</td>
+            <td>${esc(a.request_size)} B</td>
+            <td>${esc(a.hour)}h</td>
+        </tr>`).join("");
+    return `<table>
+        <thead><tr><th>verdict</th><th>method</th><th>endpoint</th><th>status</th><th>response</th><th>size</th><th>hour</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+}
+
+function renderRun(data) {
+    $("resultCard").classList.remove("hidden");
+    $("runBadge").textContent = "run #" + data.run_id;
+    $("statSamples").textContent = data.samples;
+    $("statClusters").textContent = data.clusters;
+    $("statAnomalies").textContent = data.anomalies;
+    $("statAnomalies").title = data.anomalies + " noise point(s)";
+}
+
+async function fetchAnomalies(runId) {
+    const response = await fetch(`{{ base_url }}api/v1/analysis/${runId}`);
+    const body = await response.json();
+    if (!response.ok) {
+        alertBox(body.error ? body.error.message : "Failed to load run " + runId);
+        return;
+    }
+    $("detailCard").classList.remove("hidden");
+    $("detailBadge").textContent = "run #" + runId;
+    $("detailTable").innerHTML = anomaliesTable(body.data.anomalies);
+    $("detailCard").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+async function loadHistory() {
+    const response = await fetch("{{ base_url }}api/v1/analysis?limit=10");
+    const body = await response.json();
+    const runs = body.data || [];
+    if (!runs.length) {
+        $("historyTable").innerHTML = '<p class="muted">No analyses yet — run one above.</p>';
+        return;
+    }
+    const rows = runs.map((r) => `
+        <tr>
+            <td><a href="#" data-run="${r.id}" class="run-link"><span class="badge run">#${r.id}</span></a></td>
+            <td>${esc(r.algorithm)}</td>
+            <td>${esc(r.epsilon)}</td>
+            <td>${esc(r.minimum_samples)}</td>
+            <td>${esc(r.samples)}</td>
+            <td>${esc(r.clusters)}</td>
+            <td style="color: var(--bad)">${esc(r.anomalies)}</td>
+            <td class="muted">${esc(r.finished_at)}</td>
+        </tr>`).join("");
+    $("historyTable").innerHTML = `<table>
+        <thead><tr><th>run</th><th>algorithm</th><th>epsilon</th><th>min samples</th><th>samples</th><th>clusters</th><th>anomalies</th><th>finished</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    document.querySelectorAll(".run-link").forEach((link) => {
+        link.addEventListener("click", (event) => {
+            event.preventDefault();
+            fetchAnomalies(link.dataset.run);
+        });
+    });
+}
+
+$("loadSample").addEventListener("click", () => {
+    $("logs").value = JSON.stringify(SAMPLE, null, 2);
+});
+
+$("analyze").addEventListener("click", async () => {
+    const button = $("analyze");
+    button.disabled = true;
+    try {
+        let payload;
+        try {
+            payload = JSON.parse($("logs").value);
+        } catch (e) {
+            alertBox("Invalid JSON: " + e.message);
+            return;
+        }
+        payload.epsilon = parseFloat($("epsilon").value);
+        payload.minimum_samples = parseInt($("minSamples").value, 10);
+
+        const response = await fetch("{{ base_url }}api/v1/analyze", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+        const body = await response.json();
+        if (!response.ok) {
+            alertBox(body.error ? `${body.error.code}: ${body.error.message}` : "Analysis failed");
+            return;
+        }
+        $("alert").style.display = "none";
+        renderRun(body.data);
+        loadHistory();
+        fetchAnomalies(body.data.run_id);
+    } catch (e) {
+        alertBox("Request failed: " + e.message);
+    } finally {
+        button.disabled = false;
+    }
+});
+
+$("logs").value = JSON.stringify(SAMPLE, null, 2);
+loadHistory();
+</script>
+{% endblock %}

@@ -2,18 +2,24 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit\Infrastructure\Persistence;
+namespace Tests\Integration\Persistence;
 
 use App\Domain\Anomaly\AnalysisRun;
+use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\DetectionAlgorithm;
+use App\Domain\Anomaly\HttpLogEntry;
+use App\Domain\Anomaly\HttpMethod;
+use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
-use Tests\Unit\Support\TestDatabase;
+use Tests\Integration\Support\TestDatabase;
 
 class SqliteAnalysisRunRepositoryTest extends TestCase
 {
     private SqliteAnalysisRunRepository $repository;
+
+    private SqliteAnalysisResultRepository $results;
 
     private string $dbPath;
 
@@ -22,6 +28,7 @@ class SqliteAnalysisRunRepositoryTest extends TestCase
         $database = TestDatabase::create();
         $this->dbPath = $database->path;
         $this->repository = new SqliteAnalysisRunRepository($database->pdo);
+        $this->results = new SqliteAnalysisResultRepository($database->pdo);
     }
 
     protected function tearDown(): void
@@ -31,34 +38,24 @@ class SqliteAnalysisRunRepositoryTest extends TestCase
         }
     }
 
-    private function sampleRun(): AnalysisRun
+    private function seedRun(int $sampleCount): AnalysisRun
     {
-        return new AnalysisRun(
+        return $this->results->save(new AnalysisRun(
             null,
             DetectionAlgorithm::Dbscan,
             0.35,
             5,
-            100,
+            $sampleCount,
             4,
             17,
             new DateTimeImmutable('2026-09-24T10:00:00+00:00'),
             new DateTimeImmutable('2026-09-24T10:00:02+00:00')
-        );
-    }
-
-    public function testInsertAssignsId(): void
-    {
-        $inserted = $this->repository->insert($this->sampleRun());
-
-        self::assertNotNull($inserted->id);
-        self::assertGreaterThan(0, $inserted->id);
-        self::assertSame(0.35, $inserted->epsilon);
-        self::assertSame(DetectionAlgorithm::Dbscan, $inserted->algorithm);
+        ), []);
     }
 
     public function testFindByIdReturnsHydratedRun(): void
     {
-        $inserted = $this->repository->insert($this->sampleRun());
+        $inserted = $this->seedRun(100);
 
         $found = $this->repository->findById($inserted->id ?? 0);
 
@@ -77,8 +74,8 @@ class SqliteAnalysisRunRepositoryTest extends TestCase
 
     public function testListReturnsNewestFirst(): void
     {
-        $first = $this->repository->insert($this->sampleRun());
-        $second = $this->repository->insert($this->sampleRun());
+        $first = $this->seedRun(10);
+        $second = $this->seedRun(20);
 
         $runs = $this->repository->list();
 

@@ -2,16 +2,19 @@
 
 declare(strict_types=1);
 
-namespace Tests\Unit\Controller\Api;
+namespace Tests\Integration\Controller\Api;
 
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Controller\Api\AnalysisController;
+use App\Domain\Anomaly\AnalysisResultRepository;
+use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\FeatureExtractor;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\HttpMethod;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
+use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
 use App\Utils\Config;
@@ -19,7 +22,7 @@ use flight\Engine;
 use flight\net\Request;
 use flight\util\Collection;
 use PHPUnit\Framework\TestCase;
-use Tests\Unit\Support\TestDatabase;
+use Tests\Integration\Support\TestDatabase;
 
 class AnalysisControllerTest extends TestCase
 {
@@ -31,11 +34,11 @@ class AnalysisControllerTest extends TestCase
 
     private AnalysisController $controller;
 
-    private string $dbPath;
-
-    private SqliteLogEntryRepository $logEntries;
+    private AnalysisResultRepository $results;
 
     private SqliteAnalysisRunRepository $runs;
+
+    private string $dbPath;
 
     protected function setUp(): void
     {
@@ -48,7 +51,7 @@ class AnalysisControllerTest extends TestCase
             ->addMethods(['json', 'request'])
             ->getMock();
 
-        $this->logEntries = new SqliteLogEntryRepository($database->pdo);
+        $this->results = new SqliteAnalysisResultRepository($database->pdo);
         $this->runs = new SqliteAnalysisRunRepository($database->pdo);
 
         $this->controller = new AnalysisController(
@@ -58,11 +61,10 @@ class AnalysisControllerTest extends TestCase
                 new FeatureExtractor(new LogCategoricalEncoder(16)),
                 new MinMaxNormalizer(),
                 new PhpMlDetectorFactory(),
-                $this->runs,
-                $this->logEntries
+                $this->results
             ),
             $this->runs,
-            $this->logEntries
+            new SqliteLogEntryRepository($database->pdo)
         );
     }
 
@@ -268,29 +270,27 @@ class AnalysisControllerTest extends TestCase
 
     public function testShowReturnsRunWithAnomalies(): void
     {
-        $this->givenBody((string) json_encode(['logs' => [$this->log()]]));
-        $this->controller->analyze();
-        $runId = $this->jsonCalls[0][0]['data']['run_id'];
-
-        // seed an anomaly row for the run
-        $this->logEntries->insertMany($runId, [
-            new \App\Domain\Anomaly\ClassifiedLogEntry(
+        $saved = $this->results->save($this->seededRun(), [
+            new ClassifiedLogEntry(
+                new HttpLogEntry(HttpMethod::Get, '/users', 200, 118.0, 1024, 10),
+                0,
+                false
+            ),
+            new ClassifiedLogEntry(
                 new HttpLogEntry(HttpMethod::Get, '/.env', 404, 9.0, 60, 3),
                 null,
                 true
             ),
         ]);
 
-        $this->controller->show((string) $runId);
+        $this->givenBody('');
+        $this->controller->show((string) ($saved->id ?? 0));
 
-        [$payload, $status] = $this->jsonCalls[1];
+        [$payload, $status] = $this->jsonCalls[0];
         self::assertSame(200, $status);
-        self::assertSame($runId, $payload['data']['id']);
-        // 1 analyzed log (which is noise on its own: DBSCAN needs
-        // minimumSamples neighbors) + 1 seeded anomaly
+        self::assertSame($saved->id, $payload['data']['id']);
         self::assertSame(2, $payload['data']['entries_count']);
-        self::assertCount(2, $payload['data']['anomalies']);
-        self::assertContains('/.env', array_column($payload['data']['anomalies'], 'endpoint'));
+        self::assertSame(['/.env'], array_column($payload['data']['anomalies'], 'endpoint'));
     }
 
     public function testShowUnknownRunReturns404(): void
@@ -301,5 +301,20 @@ class AnalysisControllerTest extends TestCase
         [$payload, $status] = $this->jsonCalls[0];
         self::assertSame(404, $status);
         self::assertSame('not_found', $payload['error']['code']);
+    }
+
+    private function seededRun(): \App\Domain\Anomaly\AnalysisRun
+    {
+        return new \App\Domain\Anomaly\AnalysisRun(
+            null,
+            \App\Domain\Anomaly\DetectionAlgorithm::Dbscan,
+            0.5,
+            5,
+            2,
+            1,
+            1,
+            new \DateTimeImmutable(),
+            new \DateTimeImmutable()
+        );
     }
 }

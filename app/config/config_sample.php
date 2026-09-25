@@ -32,11 +32,6 @@ return [
         'file_path' => __DIR__ . '/../../database.sqlite',
         'charset' => 'utf8mb4',
     ],
-    'session' => [
-        'prefix' => 'flight_sess_',
-        // null = system temp /flight_sessions (see flightphp/session docs)
-        'save_path' => null,
-    ],
     'anomaly' => [
         // DBSCAN defaults (overridable per request via POST /api/v1/analyze)
         'epsilon' => 0.35,
