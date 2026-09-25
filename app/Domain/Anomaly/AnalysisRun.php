@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Anomaly;
 
+use DateTimeImmutable;
+
 /**
  * Row of the analysis_runs table.
  */
@@ -17,8 +19,8 @@ final readonly class AnalysisRun
         public readonly int $sampleCount,
         public readonly int $clusterCount,
         public readonly int $anomalyCount,
-        public readonly string $startedAt,
-        public readonly string $finishedAt,
+        public readonly DateTimeImmutable $startedAt,
+        public readonly DateTimeImmutable $finishedAt,
     ) {
     }
 

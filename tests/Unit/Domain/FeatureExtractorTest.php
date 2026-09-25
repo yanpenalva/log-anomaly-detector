@@ -35,7 +35,7 @@ class FeatureExtractorTest extends TestCase
         self::assertCount($expectedDimension, $values);
 
         // one-hot block: GET is the first enum case
-        self::assertSame('method_get_0', $names[0]);
+        self::assertSame('method_get', $names[0]);
         self::assertSame(1.0, $values[0]);
         self::assertSame(0.0, $values[1]);
 

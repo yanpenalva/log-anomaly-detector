@@ -22,6 +22,13 @@ use SplFileObject;
 final class CsvHttpLogLoader implements HttpLogLoader
 {
     private const REQUIRED_COLUMNS = ['method', 'endpoint', 'status_code', 'response_time', 'request_size', 'hour'];
+    private const HEADER_LINE_NUMBER = 1;
+    private const LINE_NUMBER_OFFSET = 1;
+
+    private const FILE_FLAGS = SplFileObject::READ_CSV
+        | SplFileObject::SKIP_EMPTY
+        | SplFileObject::READ_AHEAD
+        | SplFileObject::DROP_NEW_LINE;
 
     public function load(string $path): array
     {
@@ -30,12 +37,7 @@ final class CsvHttpLogLoader implements HttpLogLoader
         }
 
         $file = new SplFileObject($path, 'r');
-        $file->setFlags(
-            SplFileObject::READ_CSV
-            | SplFileObject::SKIP_EMPTY
-            | SplFileObject::READ_AHEAD
-            | SplFileObject::DROP_NEW_LINE
-        );
+        $file->setFlags(self::FILE_FLAGS);
 
         $header = $this->readHeader($file, $path);
         if ($header === null) {
@@ -44,10 +46,10 @@ final class CsvHttpLogLoader implements HttpLogLoader
 
         $entries = [];
         foreach ($file as $row) {
-            $line = (int) $file->key() + 1;
+            $line = (int) $file->key() + self::LINE_NUMBER_OFFSET;
 
             // SplFileObject iteration restarts at the header row
-            if ($line === 1 || !is_array($row) || $this->isEmptyRow($row)) {
+            if ($line === self::HEADER_LINE_NUMBER || !is_array($row) || $this->isEmptyRow($row)) {
                 continue;
             }
 

@@ -7,12 +7,15 @@ namespace App\Infrastructure\Persistence;
 use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\LogEntryRepository;
+use DateTimeImmutable;
 use flight\database\SimplePdo;
 use flight\util\Collection;
 use Throwable;
 
 final readonly class SqliteLogEntryRepository implements LogEntryRepository
 {
+    private const TIMESTAMP_FORMAT = DATE_ATOM;
+
     public function __construct(private readonly SimplePdo $db)
     {
     }
@@ -26,7 +29,7 @@ final readonly class SqliteLogEntryRepository implements LogEntryRepository
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
 
-        $createdAt = date('c');
+        $createdAt = (new DateTimeImmutable('now'))->format(self::TIMESTAMP_FORMAT);
 
         $this->db->beginTransaction();
         try {

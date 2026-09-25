@@ -15,6 +15,7 @@ use App\Domain\Anomaly\FeatureExtractor;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\LogEntryRepository;
 use App\Domain\Anomaly\Normalizer;
+use DateTimeImmutable;
 use InvalidArgumentException;
 
 /**
@@ -44,7 +45,7 @@ final readonly class AnalyzeLogs
             throw new InvalidArgumentException('At least one log entry is required for an analysis');
         }
 
-        $startedAt = date('c');
+        $startedAt = new DateTimeImmutable('now');
 
         $rawVectors = array_map(fn (HttpLogEntry $entry) => $this->featureExtractor->extract($entry), $entries);
 
@@ -72,7 +73,7 @@ final readonly class AnalyzeLogs
             $detection->clusterCount(),
             $anomalyCount,
             $startedAt,
-            date('c'),
+            new DateTimeImmutable('now'),
         ));
 
         $runId = $run->id;

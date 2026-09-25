@@ -11,6 +11,7 @@ use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\HttpMethod;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
+use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use Tests\Unit\Support\TestDatabase;
 
@@ -36,8 +37,8 @@ class SqliteLogEntryRepositoryTest extends TestCase
             3,
             1,
             1,
-            date('c'),
-            date('c')
+            new DateTimeImmutable(),
+            new DateTimeImmutable()
         ));
         $this->runId = $run->id ?? 0;
     }

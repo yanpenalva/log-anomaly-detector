@@ -22,6 +22,10 @@ final readonly class LogCategoricalEncoder implements CategoricalEncoder
 {
     public const MIN_BUCKETS = 1;
     public const MAX_BUCKETS = 256;
+    private const ACTIVE_FEATURE = 1.0;
+    private const INACTIVE_FEATURE = 0.0;
+    private const ENDPOINT_PLACEHOLDER = '{n}';
+    private const NUMERIC_SEGMENT_PATTERN = '/\d+/';
 
     /** @var list<string> */
     private array $methodValues;
@@ -41,11 +45,11 @@ final readonly class LogCategoricalEncoder implements CategoricalEncoder
 
     public function encodeMethod(HttpMethod $method): array
     {
-        $oneHot = array_fill(0, count($this->methodValues), 0.0);
+        $oneHot = array_fill(0, count($this->methodValues), self::INACTIVE_FEATURE);
         $index = array_search($method->value, $this->methodValues, true);
 
         if ($index !== false) {
-            $oneHot[$index] = 1.0;
+            $oneHot[$index] = self::ACTIVE_FEATURE;
         }
 
         return $oneHot;
@@ -53,8 +57,8 @@ final readonly class LogCategoricalEncoder implements CategoricalEncoder
 
     public function encodeEndpoint(string $endpoint): array
     {
-        $buckets = array_fill(0, $this->endpointBuckets, 0.0);
-        $buckets[crc32(self::normalizeEndpoint($endpoint)) % $this->endpointBuckets] = 1.0;
+        $buckets = array_fill(0, $this->endpointBuckets, self::INACTIVE_FEATURE);
+        $buckets[crc32(self::normalizeEndpoint($endpoint)) % $this->endpointBuckets] = self::ACTIVE_FEATURE;
 
         return $buckets;
     }
@@ -75,6 +79,6 @@ final readonly class LogCategoricalEncoder implements CategoricalEncoder
      */
     public static function normalizeEndpoint(string $endpoint): string
     {
-        return (string) preg_replace('/\d+/', '{n}', $endpoint);
+        return (string) preg_replace(self::NUMERIC_SEGMENT_PATTERN, self::ENDPOINT_PLACEHOLDER, $endpoint);
     }
 }

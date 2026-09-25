@@ -1,8 +1,27 @@
+<div align="center">
+
 # php-log-anomaly-detector
 
-Detecção de anomalias em logs HTTP com **PHP 8.4 + Flight PHP + PHP-ML + SQLite3**.
-Projeto de estudo prático de Machine Learning clássico (clustering densidade-based),
-feature engineering, encoding, normalização, persistência e arquitetura desacoplada.
+**Unsupervised anomaly detection for HTTP traffic logs — built for studying classic Machine Learning in PHP.**
+
+[![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?logo=php&logoColor=white)](https://www.php.net)
+[![Flight PHP](https://img.shields.io/badge/Flight%20PHP-v3-2EA043)](https://flightphp.com)
+[![PHP-ML](https://img.shields.io/badge/PHP--ML-0.10-D9534F)](https://php-ai.com)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)]
+[![Tests](https://img.shields.io/badge/tests-102%20passing-2EA043)](#testing)
+[![PHPStan](https://img.shields.io/badge/PHPStan-level%208-8B5CF6)](phpstan.neon.dist)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+
+</div>
+
+---
+
+A hands-on project for studying **classic machine learning** end to end: dataset preparation,
+feature engineering, categorical encoding, normalization, density-based clustering
+(**DBSCAN**), persistence, testing, and a decoupled architecture — all in PHP, with
+**PHP-ML** encapsulated behind domain ports.
+
+## Pipeline
 
 ```text
 HTTP Logs
@@ -22,145 +41,129 @@ SQLite
 Flight API
 ```
 
-## Objetivo
+> **Core idea:** DBSCAN groups dense traffic patterns into clusters. Anything it labels a
+> **noise point** — a record too sparse to belong to any cluster — is reported as an
+> **anomaly**. No invented confidence scores: `{"anomaly": true}` means exactly that.
 
-Receber logs de requisições HTTP (`method`, `endpoint`, `status_code`,
-`response_time`, `request_size`, `hour`), agrupar padrões de tráfego com
-DBSCAN e reportar **noise points** — registros cuja vizinhança é densidade
-insuficiente para pertencer a qualquer cluster — como anomalias.
+## Architecture
 
-## Arquitetura
-
-Flight é apenas camada de entrada HTTP + bootstrap. Nenhuma regra de ML vive
-em rotas ou controllers.
+Flight stays a thin HTTP entry point. No ML rules in routes or controllers — the domain
+never imports `Phpml\`.
 
 ```text
 app/
-├── Application/Anomaly/       # AnalyzeLogs (use case: pipeline completo)
+├── Application/Anomaly/       # AnalyzeLogs use case (full pipeline orchestration)
 ├── Domain/Anomaly/            # HttpLogEntry, FeatureVector, DbscanParameters,
-│                              # DetectionResult, AnalysisResult, ports
-│                              # (AnomalyDetector, CategoricalEncoder, Normalizer,
-│                              #  repositórios, loader)
+│                              # DetectionResult, AnalysisResult + ports
 ├── Infrastructure/
-│   ├── MachineLearning/       # PHP-ML encapsulado (PhpMlDbscanDetector),
-│   │                          # LogCategoricalEncoder, MinMaxNormalizer
-│   ├── Log/                   # CsvHttpLogLoader (CSV → validação → HttpLogEntry[])
+│   ├── MachineLearning/       # PhpMlDbscanDetector, LogCategoricalEncoder,
+│   │                          # MinMaxNormalizer — PHP-ML lives here, only here
+│   ├── Log/                   # CsvHttpLogLoader (CSV → validation → HttpLogEntry[])
 │   └── Persistence/           # SimplePdo + prepared statements
-├── Controller/Api/            # HealthController, AnalysisController (thin)
+├── Controller/Api/            # HealthController, AnalysisController (thin actions)
 ├── config/                    # bootstrap, services (Dice DI), routes
-└── Utils/                     # Config, Env, DatabaseFactory (do skeleton)
+└── Utils/                     # Config, Env, DatabaseFactory
 
-migrations/                    # SQL puro via `php runway migrate`
-datasets/                      # development.csv (determinístico, seed 42)
-scripts/generate_dataset.php   # gerador do dataset
-tests/                         # PHPUnit (unit + integração)
+migrations/                    # plain SQL via `php runway migrate`
+datasets/                      # development.csv (deterministic, seed 42)
+scripts/generate_dataset.php   # dataset generator
+tests/                         # PHPUnit — unit + pipeline integration
 ```
 
-O domínio **não importa nada do PHP-ML**: `PhpMlDbscanDetector` implementa a
-port `AnomalyDetector` (interface no domínio). O mesmo vale para encoding,
-normalização e persistência.
+| Layer boundary | Rule |
+|---|---|
+| Domain → ML library | blocked — only `AnomalyDetector` port |
+| Controller → SQL | blocked — repositories only |
+| API → filesystem paths | blocked — inline logs only |
+| Encoder / normalizer state | fitted once per batch, reused — never recomputed per record |
 
-## Instalação
+## Getting started
 
 ```bash
-composer install
-cp .env.example .env          # DB_DRIVER=sqlite
-php runway migrate            # cria analysis_runs + log_entries
+composer install               # dependencies (Flight, PHP-ML, SQLite via PDO)
+cp .env.example .env           # DB_DRIVER=sqlite
+php runway migrate             # creates analysis_runs + log_entries
+composer start                 # php -S localhost:8000 -t public
 ```
 
-## Execução
+Fresh database at any time: delete `database.sqlite`, run `php runway migrate`.
+
+## Testing
 
 ```bash
-composer start                # php -S localhost:8000 -t public
-php runway migrate            # aplicar migrations pendentes
+composer test                  # PHPUnit — 102 tests, deterministic
+composer analyse               # PHPStan level 8
+composer check                 # both
 ```
 
-Para recomeçar do zero (*fresh migration*): apague `database.sqlite` e rode
-`php runway migrate`.
+ML tests use fixed datasets; the development dataset is generated with a fixed seed,
+so clustering results are fully reproducible.
 
-## Testes
+## Dataset
 
-```bash
-composer test                 # PHPUnit
-composer analyse              # PHPStan nível 8
-composer check                # ambos
-```
+`datasets/development.csv` — 1,400 rows, generated by `php scripts/generate_dataset.php`
+(seed 42 → always identical). It contains **6 dense traffic profiles** plus ~2.5% injected
+anomalies spread across sparse sub-kinds so none of them becomes dense enough to form its
+own cluster:
 
-Os testes de ML são determinísticos: datasets fixos em código e dataset de
-desenvolvimento gerado com seed fixa.
-
-## Dataset de desenvolvimento
-
-`datasets/development.csv` (1.400 linhas) é gerado por
-`php scripts/generate_dataset.php` (seed 42 → sempre idêntico). Contém 6
-perfis de tráfego denso (`/users`, `/users/{id}`, `/payments`, `/health`,
-`/api/search`, `/products/{id}`) e ~2,5% de anomalias injetadas em sub-tipos
-esparsos: rajadas de erro 5xx, floods de payload grande, vulnerability
-scanners (`/.env`, `/wp-admin.php`, …) em horas atípicas e requisições
-slowloris.
+| Normal profiles | Injected anomaly kinds |
+|---|---|
+| `GET /users` · `GET /users/{id}` | 5xx error bursts on normal endpoints |
+| `POST /payments` · `GET /health` | large-payload floods (60k–340k bytes) |
+| `POST /api/search` · `GET /products/{id}` | vulnerability scanners (`/.env`, `/wp-admin.php`, …) at odd hours |
+| | slowloris-style slow requests |
 
 ## Feature engineering
 
-Vetor de features por log (ordem fixa, 9+16+4 = 29 dimensões):
+One vector per log entry — fixed layout, **29 dimensions**:
 
-| Bloco | Features | Estratégia |
+| Block | Dims | Strategy |
 |---|---|---|
-| `method` | 9 (um por verbo HTTP) | **one-hot** sobre enum fixo — sem ordinais falsos |
-| `endpoint` | 16 buckets | **feature hashing** (`crc32(endpoint_normalizado) % 16`), determinístico, tolera categorias não vistas |
-| `status_code` | 1 | numérico cru |
-| `response_time` | 1 | numérico cru (ms) |
-| `request_size` | 1 | numérico cru (bytes) |
-| `hour` | 1 | numérico cru (0–23) |
+| `method` | 9 | **one-hot** over a fixed HTTP verb enum — no fake ordinals |
+| `endpoint` | 16 | **feature hashing** (`crc32 % 16`) after normalizing paths (`/users/1912` → `/users/{n}`) — deterministic, tolerates unseen categories |
+| `status_code` | 1 | raw numeric |
+| `response_time` | 1 | raw numeric (ms) |
+| `request_size` | 1 | raw numeric (bytes) |
+| `hour` | 1 | raw numeric (0–23) |
 
-Antes do hash, o endpoint é normalizado (`/users/1912` → `/users/{n}`) para
-que URLs parametrizadas compartilhem densidade em vez de fragmentar.
+### Normalization
 
-### Normalização
-
-**Min-max** por feature, fitted no batch inteiro (`Normalizer::fit()` →
-`FittedNormalizer`). Os parâmetros aprendidos (`min`/`max` por dimensão)
-são reaproveitados em todo `transform()` — nunca recomputados por registro.
-Feature constante (`min == max`) mapeia para 0.
+**Min-max** per feature, **fitted on the batch** (`Normalizer::fit()` → `FittedNormalizer`).
+The learned `min`/`max` parameters are reused for every `transform()` — never recomputed
+per record. A constant feature (`min == max`) maps to `0`.
 
 ## DBSCAN
 
-Implementação: `Phpml\Clustering\DBSCAN` (PHP-ML 0.10), distância Euclidiana
-comparação de vizinhança **estrita** (`< epsilon`).
+Implementation: `Phpml\Clustering\DBSCAN` (PHP-ML), Euclidean distance, strict `<` epsilon.
 
-Parâmetros (config `anomaly.*`, sobrescrevíveis por request):
-
-| Parâmetro | Default | Faixa |
+| Parameter | Default | Allowed range |
 |---|---|---|
-| `epsilon` | 0.35 | 0.001–1000 |
-| `minimum_samples` | 5 | 1–10000 |
+| `epsilon` | 0.35 | 0.001 – 1000 |
+| `minimum_samples` | 5 | 1 – 10,000 |
 
-Semântica (respeitando o algoritmo real):
+Semantics — exactly how the algorithm works:
 
-- **core point**: ≥ `minimum_samples` vizinhos dentro de `epsilon`
-  (incluindo ele próprio);
-- **cluster**: núcleo + tudo densidade-reachable; ids atribuídos na ordem de
-  descoberta (determinístico para ordem de entrada fixa);
-- **noise point**: registro que não pertence a cluster nenhum → **anomalia**;
-- **anomalia** = flag booleana. **Não existe** `confidence`, `probability`
-  nem `accuracy`: DBSCAN não produz essas grandezas. A resposta diz
-  `{"anomaly": true}` apenas quando é verdade.
+- **core point**: at least `minimum_samples` neighbors within `epsilon` (itself included)
+- **cluster**: core points plus everything density-reachable; ids assigned in discovery order (deterministic for a fixed input order)
+- **noise point**: belongs to no cluster → **anomaly**
+- **no** `confidence`, `probability`, or `accuracy`: DBSCAN does not produce them, so the API never returns them
 
-Nota sobre a saída do PHP-ML: `DBSCAN::cluster()` renumera as chaves dos
-membros (`array_merge` em `groupByCluster`), destruindo o índice original.
-O wrapper reconstrói a atribuição por multiset (vetores idênticos recebem
-sempre o mesmo label — distâncias idênticas a todos os pontos).
+> **Implementation note:** PHP-ML's `DBSCAN::cluster()` renumbers member keys internally
+> (`array_merge` in `groupByCluster`), destroying original sample indices. The wrapper
+> reconstructs assignments via multiset matching — identical vectors always receive
+> identical labels, so consumption in dataset order is unambiguous.
 
-## Endpoints
+## API
 
-| Método | Rota | Descrição |
+| Method | Route | Description |
 |---|---|---|
-| GET | `/api/v1/health` | liveness |
-| POST | `/api/v1/analyze` | análise batch + persistência |
-| GET | `/api/v1/analysis` | últimas análises (`?limit=1..200`) |
-| GET | `/api/v1/analysis/{id}` | detalhe + anomalias (cap 100, flag `anomalies_truncated`) |
-| POST | `/api/v1/detect` | **501** — ver Limitações |
+| `GET` | `/api/v1/health` | liveness |
+| `POST` | `/api/v1/analyze` | batch analysis + persistence |
+| `GET` | `/api/v1/analysis` | recent runs (`?limit=1..200`) |
+| `GET` | `/api/v1/analysis/{id}` | run detail + anomalies (capped, with `anomalies_truncated`) |
+| `POST` | `/api/v1/detect` | **501** — see [Limitations](#limitations) |
 
-### POST /api/v1/analyze
+### `POST /api/v1/analyze`
 
 ```json
 {
@@ -173,57 +176,49 @@ sempre o mesmo label — distâncias idênticas a todos os pontos).
 }
 ```
 
-Resposta:
-
 ```json
 {"data": {"run_id": 5, "algorithm": "dbscan", "epsilon": 0.4,
           "minimum_samples": 5, "samples": 133, "clusters": 3, "anomalies": 3}}
 ```
 
-Erros: JSON inválido → 400; corpo não-objeto → 400; campo de log inválido →
-422 (com índice do log); excesso de logs/payload → 422/413. Limites em
-`anomaly.max_payload_bytes` (2 MiB) e `anomaly.max_logs_per_request` (10k).
-A API **nunca** aceita caminho de arquivo — só logs inline.
+Errors: invalid JSON → `400`; non-object body → `400`; invalid log field → `422` (with the
+offending index); too many logs → `422`; oversized payload → `413`. Limits:
+`anomaly.max_payload_bytes` (2 MiB) and `anomaly.max_logs_per_request` (10k).
+The API **never** accepts a file path — inline logs only.
 
-## Persistência
+## Persistence
 
-SQLite via `flight\database\SimplePdo` (PDO) + prepared statements.
-Tabelas (ver `migrations/`):
+SQLite via `flight\database\SimplePdo` (PDO) and prepared statements. No ORM, no
+serialized arrays, no `models` table (there is no trained model state to persist).
 
-- `analysis_runs`: `id, algorithm, epsilon, minimum_samples, sample_count,
-  cluster_count, anomaly_count, started_at, finished_at`
-- `log_entries`: `id, analysis_run_id, method, endpoint, status_code,
-  response_time, request_size, hour, is_anomaly, cluster (NULL = noise),
-  created_at`
+| Table | Columns |
+|---|---|
+| `analysis_runs` | `id, algorithm, epsilon, minimum_samples, sample_count, cluster_count, anomaly_count, started_at, finished_at` |
+| `log_entries` | `id, analysis_run_id, method, endpoint, status_code, response_time, request_size, hour, is_anomaly, cluster (NULL = noise), created_at` |
 
-Sem ORM. Sem arrays serializados. Sem tabela `models` (não há estado de
-modelo treinado para persistir nesta versão).
+## Limitations
 
-## Limitações (explícitas)
-
-1. **`/detect` não existe de verdade (501)**: DBSCAN é algoritmo batch — não
-   há estado treinado que classifique um ponto novo incrementalmente. A
-   extensão tecnicamente correta seria persistir os vetores normalizados do
-   treino e classificar um ponto novo consultando sua vizinhança-ε
-   (anomalia se vizinhos < `minimum_samples`). Projetado, não implementado.
-2. **Colisões de hash**: endpoints distintos podem cair no mesmo bucket
-   (hashing trick); com buckets=16 e cardinalidade baixa de paths
-   normalizados, impacto prático pequeno.
-3. **`hour` linear**: 23 e 0 ficam distantes. Encoding cíclico (sin/cos)
-   foi testado e rejeitado nesta configuração: com min-max + Euclidiana
-   espalha horas do mesmo perfil além de ε e fragmenta clusters.
-4. **Min-max é sensível a outliers extremos** (estica a escala). Z-score ou
-   robust scaling são alternativas naturais.
-5. **DBSCAN por batch**: cada análise re-clusteriza tudo. Não há
-   aprendizado incremental.
+1. **`/detect` is intentionally a 501.** DBSCAN is a batch algorithm — there is no trained
+   state that can classify a single new point incrementally. The technically correct
+   extension would persist normalized training vectors and classify a new point by its
+   epsilon-neighborhood (anomaly when neighbors < `minimum_samples`). Designed, not built.
+2. **Hash collisions**: distinct endpoints may share a bucket (hashing trick). With 16
+   buckets over a low cardinality of normalized paths, practical impact is small.
+3. **Linear `hour`**: 23 and 0 are far apart. Cyclical sin/cos encoding was tested and
+   rejected here: with min-max + Euclidean distance it spreads same-profile hours beyond
+   epsilon and fragments clusters.
+4. **Min-max is outlier-sensitive** (stretches the scale). Z-score or robust scaling are
+   natural alternatives.
+5. **Batch-only**: every analysis re-clusters the full input. No incremental learning.
 
 ## Roadmap
 
-- **V1** ✅ remoção do boilerplate, SQLite, dataset CSV, domínio, features,
-  encoding, normalização, DBSCAN, testes
-- **V2** ✅ persistência das análises, `/health`, `/analyze`, erros globais
-  tipados por endpoint
-- **V3** parser de access.log do Nginx, batch analysis via CLI
-- **V4** comparar DBSCAN × K-Means (e outros do PHP-ML) com métricas
-  adequadas a cada família (densidade × centróide)
-- **V5** benchmarking, estatísticas, visualização, dashboard opcional
+- [x] **V1** — boilerplate removal, SQLite, CSV dataset, domain model, feature extraction, encoding, normalization, DBSCAN, tests
+- [x] **V2** — analysis persistence, `/health`, `/analyze`, typed per-endpoint error handling
+- [ ] **V3** — Nginx access.log parser, batch analysis CLI
+- [ ] **V4** — DBSCAN vs K-Means (and other PHP-ML techniques) compared with metrics that fit each family (density-based vs centroid-based)
+- [ ] **V5** — benchmarking, statistics, visualization, optional dashboard
+
+## License
+
+[MIT](LICENSE)

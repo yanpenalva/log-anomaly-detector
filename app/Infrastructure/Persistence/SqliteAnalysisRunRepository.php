@@ -7,6 +7,7 @@ namespace App\Infrastructure\Persistence;
 use App\Domain\Anomaly\AnalysisRun;
 use App\Domain\Anomaly\AnalysisRunRepository;
 use App\Domain\Anomaly\DetectionAlgorithm;
+use DateTimeImmutable;
 use flight\database\SimplePdo;
 use flight\util\Collection;
 
@@ -15,6 +16,8 @@ use flight\util\Collection;
  */
 final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepository
 {
+    private const TIMESTAMP_FORMAT = DATE_ATOM;
+
     public function __construct(private readonly SimplePdo $db)
     {
     }
@@ -33,8 +36,8 @@ final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepositor
             $run->sampleCount,
             $run->clusterCount,
             $run->anomalyCount,
-            $run->startedAt,
-            $run->finishedAt,
+            $run->startedAt->format(self::TIMESTAMP_FORMAT),
+            $run->finishedAt->format(self::TIMESTAMP_FORMAT),
         ]);
 
         return $run->withId((int) $this->db->lastInsertId());
@@ -90,8 +93,8 @@ final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepositor
             (int) $row['sample_count'],
             (int) $row['cluster_count'],
             (int) $row['anomaly_count'],
-            (string) $row['started_at'],
-            (string) $row['finished_at'],
+            new DateTimeImmutable((string) $row['started_at']),
+            new DateTimeImmutable((string) $row['finished_at']),
         );
     }
 }

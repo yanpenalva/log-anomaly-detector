@@ -7,6 +7,7 @@ namespace Tests\Unit\Infrastructure\Persistence;
 use App\Domain\Anomaly\AnalysisRun;
 use App\Domain\Anomaly\DetectionAlgorithm;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
+use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 use Tests\Unit\Support\TestDatabase;
 
@@ -40,8 +41,8 @@ class SqliteAnalysisRunRepositoryTest extends TestCase
             100,
             4,
             17,
-            '2026-09-24T10:00:00+00:00',
-            '2026-09-24T10:00:02+00:00'
+            new DateTimeImmutable('2026-09-24T10:00:00+00:00'),
+            new DateTimeImmutable('2026-09-24T10:00:02+00:00')
         );
     }
 
@@ -66,7 +67,7 @@ class SqliteAnalysisRunRepositoryTest extends TestCase
         self::assertSame(100, $found->sampleCount);
         self::assertSame(4, $found->clusterCount);
         self::assertSame(17, $found->anomalyCount);
-        self::assertSame('2026-09-24T10:00:00+00:00', $found->startedAt);
+        self::assertSame('2026-09-24T10:00:00+00:00', $found->startedAt->format(DATE_ATOM));
     }
 
     public function testFindByIdReturnsNullForUnknownId(): void
