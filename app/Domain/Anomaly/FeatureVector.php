@@ -7,8 +7,7 @@ namespace App\Domain\Anomaly;
 use InvalidArgumentException;
 
 /**
- * Immutable, named numeric vector. Feature order is stable across the
- * whole pipeline (extraction, normalization, clustering, persistence).
+ * Immutable, named numeric vector. Feature order is stable across the pipeline.
  */
 final readonly class FeatureVector
 {

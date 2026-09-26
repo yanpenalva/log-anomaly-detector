@@ -13,9 +13,7 @@ use flight\database\SimplePdo;
 use Throwable;
 
 /**
- * SQLite implementation of the atomic analysis persistence:
- * BEGIN → INSERT analysis_runs → INSERT log_entries[] → COMMIT (ROLLBACK
- * on any failure). Runs and their entries are never left inconsistent.
+ * Atomic persistence: BEGIN → run → entries → COMMIT; ROLLBACK on failure.
  */
 final readonly class SqliteAnalysisResultRepository implements AnalysisResultRepository
 {

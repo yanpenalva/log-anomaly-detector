@@ -13,22 +13,13 @@ use PDOException;
 
 /**
  * Apply pending SQL migrations from migrations/.
- *
- * Usage: php runway migrate
- *
- * Files (driver selected from config / .env DB_DRIVER):
- *   SQLite (default): migrations/{YYYYMMDDHHMMSS}_{description}.sql
- *   MySQL:            migrations/{YYYYMMDDHHMMSS}_{description}.mysql.sql
- *
- * Tracking table: _migrations (id, name, applied_at)
- *
- * Note: Lives under app/commands/ (lowercase) so Runway can discover it.
- * Namespace is App\Command — Runway requires the file by path, not PSR-4 alone.
+ * SQLite: {YYYYMMDDHHMMSS}_{description}.sql · MySQL: *.mysql.sql
+ * Applied names are tracked in _migrations.
  */
 class MigrateCommand extends AbstractBaseCommand
 {
     /**
-     * @param array<string,mixed> $config From .runway-config.json
+     * @param array<string,mixed> $config
      */
     public function __construct(array $config)
     {
@@ -37,7 +28,6 @@ class MigrateCommand extends AbstractBaseCommand
 
     public function execute(): void
     {
-        // Command::io() returns Interactor; avoid Application::io() union for static analysis
         $io = $this->io();
         $projectRoot = getcwd();
         if ($projectRoot === false) {
@@ -99,11 +89,6 @@ class MigrateCommand extends AbstractBaseCommand
     }
 
     /**
-     * Pick migration files for the active driver.
-     *
-     * - sqlite (default): *.sql excluding *.mysql.sql
-     * - mysql: *.mysql.sql only
-     *
      * @return array<int,string> Absolute paths, sorted
      */
     public static function listMigrationFiles(string $migrationsDir, string $driver): array
@@ -126,7 +111,6 @@ class MigrateCommand extends AbstractBaseCommand
                 continue;
             }
 
-            // sqlite and any other non-mysql default: plain .sql only
             if (!$isMysql) {
                 $files[] = $file;
             }
@@ -195,7 +179,6 @@ class MigrateCommand extends AbstractBaseCommand
         $rows = $db->fetchAll('SELECT name FROM _migrations ORDER BY name ASC');
         $map = [];
         foreach ($rows as $row) {
-            // SimplePdo::fetchAll returns Collection (ArrayAccess) or array rows
             $name = $row['name'] ?? null;
             if ($name !== null && $name !== '') {
                 $map[(string) $name] = true;
@@ -214,7 +197,6 @@ class MigrateCommand extends AbstractBaseCommand
         }
 
         try {
-            // Split on semicolons at end of lines for multi-statement files
             $statements = $this->splitSql($sql);
             foreach ($statements as $statement) {
                 $db->exec($statement);
@@ -241,7 +223,6 @@ class MigrateCommand extends AbstractBaseCommand
      */
     private function splitSql(string $sql): array
     {
-        // Strip line comments
         $lines = preg_split('/\R/', $sql);
         $cleaned = [];
         if ($lines !== false) {

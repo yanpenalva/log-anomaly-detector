@@ -11,8 +11,7 @@ use flight\database\SimplePdo;
 use flight\util\Collection;
 
 /**
- * Read-side log entry queries. Writes belong to the atomic
- * SqliteAnalysisResultRepository.
+ * Read-side log entry queries; writes belong to SqliteAnalysisResultRepository.
  */
 final readonly class SqliteLogEntryRepository implements LogEntryRepository
 {

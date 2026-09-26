@@ -14,6 +14,11 @@ RUN mkdir -p app/commands \
 
 COPY . .
 
+# Fresh clones have no config.php (gitignored). The image always starts from
+# the committed sample; env vars (docker-compose.yml) still override defaults
+# at runtime via Config::mergeEnv.
+RUN cp app/config/config_sample.php app/config/config.php
+
 RUN composer dump-autoload --optimize
 
 EXPOSE 8000

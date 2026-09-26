@@ -7,7 +7,7 @@ namespace App\Domain\Anomaly;
 interface LogEntryRepository
 {
     /**
-     * @return list<ClassifiedLogEntry> Anomalous entries of one run
+     * @return list<ClassifiedLogEntry>
      */
     public function anomaliesForRun(int $runId, int $limit = 100): array;
 

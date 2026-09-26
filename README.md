@@ -1,10 +1,9 @@
 <div align="center">
 
-# php-log-anomaly-detector
+# log-anomaly-detector
 
 **Unsupervised anomaly detection for HTTP traffic logs — classic Machine Learning, in PHP.**
 
-[![CI](https://github.com/yanpenalva/log-anomaly-detector/actions/workflows/ci.yml/badge.svg)](https://github.com/yanpenalva/log-anomaly-detector/actions/workflows/ci.yml)
 [![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?logo=php&logoColor=white)](https://www.php.net)
 [![Flight PHP](https://img.shields.io/badge/Flight%20PHP-v3-2EA043)](https://flightphp.com)
 [![PHP-ML](https://img.shields.io/badge/PHP--ML-0.10-D9534F)](https://php-ai.com)
@@ -16,109 +15,493 @@
 
 ---
 
-A hands-on study project covering **classic machine learning** end to end: dataset
-preparation, feature engineering, categorical encoding, normalization, density-based
-clustering (**DBSCAN**), atomic persistence, testing, CI, and a decoupled architecture —
-with **PHP-ML** fully encapsulated behind domain ports.
+## 1. Overview
 
-## Pipeline
+This project detects unusual records in HTTP traffic logs using **unsupervised Machine
+Learning**. There are no labels such as `normal` / `anomaly` anywhere in the input — no
+one tells the algorithm what an attack looks like. It receives only the structure of the
+data: method, endpoint, status, timing, size. From that alone it discovers dense
+patterns and flags records that fit none of them.
+
+The pipeline, end to end:
 
 ```text
 HTTP Logs
     ↓
-Feature Extraction
+Feature Extraction      (strings → numeric vectors)
     ↓
-Encoding
+Normalization           (all features on a comparable scale)
     ↓
-Normalization
+DBSCAN                  (density-based clustering)
     ↓
-DBSCAN
+Clusters + Noise
     ↓
-Clusters / Noise
+noise → anomaly candidate   (domain interpretation)
     ↓
-SQLite
+SQLite                  (atomic persistence)
     ↓
-Flight API
+Flight API + dashboard
 ```
 
-> **Core idea:** DBSCAN groups dense traffic patterns into clusters. Anything it labels a
-> **noise point** — a record too sparse to belong to any cluster — is reported as an
-> **anomaly**. No invented confidence scores: `{"anomaly": true}` means exactly that.
+> **Core rule:** DBSCAN produces *cluster membership*. A point that belongs to no
+> cluster is a **noise point**. This project reports noise as an anomaly — an
+> interpretation of the domain, not a property of the algorithm (see [§12](#12-why-noise-becomes-anomaly)).
 
-## Dashboard
+## 2. Why this project exists
 
-Serving the app opens a built-in dashboard (`/`): paste logs, tune epsilon /
-minimum samples, run the analysis, inspect anomalies and browse persisted runs.
-Tooltips explain every concept (core points, noise, epsilon, hashing).
+The goal is to study, using PHP:
 
-## Architecture
+- classic Machine Learning and **unsupervised learning**;
+- **feature engineering** — turning raw records into numeric vectors;
+- **categorical encoding** — one-hot, feature hashing;
+- **normalization** — why scale matters for distance;
+- **distance metrics** — Euclidean geometry over feature space;
+- **clustering** and **DBSCAN** in particular;
+- **anomaly detection** as an interpretation layer over clustering.
 
-Flight is a thin HTTP entry point. No ML rules in routes or controllers — the domain
-never imports `Phpml\`.
+[PHP-ML](https://php-ai.com) is used **deliberately**: it makes every concept visible
+and hackable in PHP itself, without a Python toolchain hiding the mechanics behind a
+scikit-learn one-liner. The library is confined to one infrastructure namespace —
+see [§16](#16-php-ml-isolation).
+
+## 3. The problem
+
+Consider a small slice of HTTP logs:
 
 ```text
-app/
-├── Application/Anomaly/       # AnalyzeLogs use case (pipeline orchestration)
-├── Domain/Anomaly/            # HttpLogEntry, FeatureVector, DbscanParameters,
-│                              # DetectionResult, AnalysisResult + ports
-├── Infrastructure/
-│   ├── MachineLearning/       # PhpMlDbscanDetector, LogCategoricalEncoder,
-│   │                          # MinMaxNormalizer — PHP-ML lives here, only here
-│   ├── Log/                   # CsvHttpLogLoader (CSV → validation → HttpLogEntry[])
-│   └── Persistence/           # SimplePdo + prepared statements
-├── Controller/Api/            # HealthController, AnalysisController (thin actions)
-├── config/                    # bootstrap, services (Dice DI), routes
-└── Utils/                     # Config, Env, DatabaseFactory
+GET  /users       200  120ms
+GET  /users       200  118ms
+GET  /users       200  125ms
+
+POST /payments    201  320ms
+POST /payments    201  340ms
+
+GET  /.env        404    8ms
 ```
 
-| Layer boundary | Rule |
+The first records form two **dense** groups: same method, same endpoint, same status
+class, similar timing. `GET /.env` is different on *every* axis at once — an endpoint no
+one else requests, a different method, an error status, a suspiciously fast response.
+
+A human sees it instantly. The question this project answers: **how do we make that
+judgment computable?** The answer is: encode each record as a point in numeric space,
+so "behaves like the majority" becomes "close to other points", and "unusual" becomes
+"far from everything".
+
+## 4. Supervised vs unsupervised learning
+
+| | Supervised | Unsupervised |
+|---|---|---|
+| Input | `X → known label Y` | `X` only |
+| Example | `transaction → fraud / not fraud` | raw logs, no labels |
+| Learns | mapping from X to Y | structure of X |
+| This project | — | `HTTP logs → DBSCAN → clusters + noise` |
+
+In supervised fraud detection, someone had to label thousands of transactions first.
+Here **no label exists during analysis**. The algorithm observes only how records
+distribute. That is exactly what makes it useful for logs: you rarely have labeled
+attack data, but you always have traffic.
+
+## 5. What is clustering
+
+Clustering groups records by **similarity** — points close together (under a distance
+measure) end up in the same group. Applied to the logs above:
+
+```text
+Cluster A              Cluster B              Noise
+GET  /users            POST /payments         GET /.env
+GET  /users            POST /payments
+GET  /users
+```
+
+Two honest caveats:
+
+1. A cluster is a **statistical** statement ("these records resemble each other"), not
+   automatically "normal". A dense cluster of identical 500-error bursts is dense but
+   hardly healthy.
+2. This project adopts a **domain heuristic**:
+
+   ```text
+   dense pattern → expected behavior
+   noise         → anomaly candidate
+   ```
+
+   The heuristic is the application's choice; the clustering math is neutral.
+
+## 6. Feature engineering
+
+Algorithms do not receive `GET`, `/users`, `200` as semantic concepts. Every input must
+become a **numeric vector**. In this project:
+
+```text
+HttpLogEntry
+     ↓  FeatureExtractor
+FeatureVector   (33 floats)
+```
+
+### HTTP method — one-hot encoding
+
+The method is categorical, so it becomes a one-hot block:
+
+```text
+GET  → [1,0,0]
+POST → [0,1,0]
+PUT  → [0,0,1]
+```
+
+Why not `GET = 1, POST = 2, PUT = 3`? Numeric coding implies **ordinal relations that
+do not exist**: it would make `PUT` "greater than" `GET`, and `GET` vs `PUT` (distance
+2) twice as different as `GET` vs `POST` (distance 1). One-hot gives every category the
+same pairwise distance, expressing only "same or different".
+
+### Endpoint — normalize, then feature hashing
+
+Raw endpoints are too diverse (`/users/123`, `/users/456`, `/products?page=1`…). Two
+normalization steps first:
+
+```text
+/users/123        → /users/{n}       (fully-numeric segments collapse)
+/products?page=1  → /products        (query string dropped)
+```
+
+`/v2/users` and `/oauth2/callback` stay intact — only *entirely* numeric segments
+collapse. Then **feature hashing** maps the normalized path into a fixed vector:
+
+```text
+normalized endpoint
+     ↓
+crc32
+     ↓
+mod 16 (bucket)
+     ↓
+one-hot bucket vector
+```
+
+This handles **unbounded endpoint cardinality with a fixed 16-dimension budget**, and
+unseen endpoints still encode consistently. The trade-off: two distinct endpoints can
+land in the same bucket (**collision**). With low cardinality after normalization the
+practical impact is small — see [§23](#23-limitations).
+
+### HTTP status — one-hot class, not a quantity
+
+Status codes look numeric but are **categories**. Treating `200` and `500` as
+continuum values would imply `200` is "closer to `404`" than `500` is — a fake
+relationship (is 404 really "halfway healthy"?). Instead each code maps to its HTTP
+class:
+
+```text
+1xx  2xx  3xx  4xx  5xx     (5 dims, one-hot)
+```
+
+Consequence: `200` and `201` become the **same** class; `404` and `500` become
+**different** classes. The exact code is intentionally lost after encoding — see
+[§23](#23-limitations).
+
+### Numeric features
+
+Three features stay numeric (scaling happens later, [§8](#8-normalization)):
+
+| Feature | Meaning |
 |---|---|
-| Domain → ML library | blocked — only `AnomalyDetector` port |
-| Controller → SQL | blocked — repositories only |
-| API → filesystem paths | blocked — inline logs only |
-| Encoder / normalizer state | fitted once per batch, reused — never recomputed per record |
-| Run + entries persistence | atomic — single transaction via `AnalysisResultRepository` |
+| `response_time` | milliseconds |
+| `request_size` | bytes |
+| `hour` | 0–23, linear |
 
-## Requirements
+## 7. Feature vector
 
-- **PHP 8.4+** with `pdo`, `pdo_sqlite`, `mbstring`, `json`
-- Composer 2
+One log entry → one vector with a fixed layout of **33 dimensions**:
 
-Or use Docker (no host PHP required): `docker compose up --build` → `http://localhost:8000`.
-
-## Getting started
-
-```bash
-composer install               # dependencies (Flight, PHP-ML, Twig, Tracy)
-cp .env.example .env           # DB_DRIVER=sqlite
-php runway migrate             # creates analysis_runs + log_entries
-composer start                 # php -S localhost:8000 -t public
-```
-
-Fresh database at any time: delete `database.sqlite`, run `php runway migrate`.
-
-## Testing
-
-```bash
-composer test                  # PHPUnit — deterministic suite
-composer analyse               # PHPStan level 8
-composer check                 # both
-```
-
-| Suite | Contents |
+| Block | Dims |
 |---|---|
-| `tests/Unit/` | isolated: domain objects, extractor, encoder, normalizer, geometry, CSV parser, feature geometry |
-| `tests/Integration/` | real SQLite + real migrations: repositories, atomic persistence, FK/cascade, full pipeline, API controllers |
+| method (one-hot, 9 HTTP verbs) | 9 |
+| endpoint (hash buckets) | 16 |
+| status class (one-hot) | 5 |
+| numeric (response_time, request_size, hour) | 3 |
+| **total** | **33** |
 
-CI runs on every push/PR (`.github/workflows/ci.yml`): `composer validate --strict` →
-install → tests → PHPStan, on PHP 8.4 with Composer caching.
+Conceptually:
 
-## Dataset
+```text
+[
+  method...,        // 9 values, one "1"
+  endpoint...,      // 16 values, one "1"
+  status...,        // 5 values, one "1"
+  response_time,
+  request_size,
+  hour
+]
+```
 
-`datasets/development.csv` — 1,400 rows, generated by `php scripts/generate_dataset.php`
-(seed 42 → always identical). It contains **6 dense traffic profiles** plus ~2.5% injected
-anomalies spread across sparse sub-kinds so none of them becomes dense enough to form its
-own cluster:
+The layout order is part of the contract between extractor, normalizer, and detector.
+
+## 8. Normalization
+
+Numeric features live in wildly different ranges:
+
+```text
+response_time = 120
+request_size  = 250000
+hour          = 10
+```
+
+Euclidean distance sums squared differences. Without scaling, `request_size` would
+contribute `250000²` while `hour` contributes at most `23²` — **request_size would
+dominate every distance**, and method/endpoint/status would be invisible noise by
+comparison.
+
+The project uses **Min-Max normalization**, fitted per batch:
+
+```text
+x' = (x - min) / (max - min)        → x' ∈ [0, 1]
+```
+
+Flow:
+
+```text
+fit   → learn min/max of each feature over the whole batch
+transform → apply the learned min/max to every vector
+```
+
+Parameters are learned **once per batch** and reused for every record — never
+recomputed per record. A constant feature (`min == max`, e.g. every request has the
+same size) would divide by zero, so it maps to `0`.
+
+## 9. Distance
+
+Vectors are compared with **Euclidean distance**:
+
+```text
+d(a, b) = √( Σ (aᵢ - bᵢ)² )
+```
+
+Intuition: each feature is a coordinate; each log is a point; distance is the straight
+line between two points.
+
+```text
+small distance → similar records
+large distance → different records
+```
+
+That single number is all DBSCAN gets — which is why [§6](#6-feature-engineering) and
+[§8](#8-normalization) decisions matter so much: they *define* what "similar" means.
+
+## 10. Feature geometry
+
+This is the part most worth internalizing: **one-hot categorical features produce
+large, discrete distances.** Take two records differing only in method:
+
+```text
+GET  → [1, 0]
+POST → [0, 1]
+
+d = √((1-0)² + (0-1)²) = √2 ≈ 1.414
+```
+
+Compare that with the default `epsilon = 0.35`:
+
+```text
+1.414  >  0.35   →  different method → generally not neighbors
+```
+
+The same logic holds for endpoint buckets and status classes: any single categorical
+mismatch alone already contributes √2, well beyond epsilon. Two records can only be
+neighbors if they agree on method, endpoint bucket, **and** status class — numeric
+features only fine-tune distance *within* an agreeing group.
+
+Important framing: **this is a decision about the feature space, not a universal
+property of DBSCAN.** With different encoding, scaling, or epsilon, geometry would
+behave differently. `tests/Unit/FeatureGeometryTest.php` locks these distances so the
+behavior cannot drift silently.
+
+## 11. DBSCAN
+
+**DBSCAN** — *Density-Based Spatial Clustering of Applications with Noise*. It finds
+clusters as **dense regions** separated by sparse space, and explicitly has an output
+category for points that fit nowhere.
+
+Two parameters:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `epsilon` | 0.35 | neighborhood radius: `distance < epsilon` → neighbor |
+| `minimum_samples` | 5 | how many neighbors make a region "dense" |
+
+Three kinds of points:
+
+- **core point** — has at least `minimum_samples` neighbors within `epsilon` (itself
+  included). Sits inside a dense region.
+- **border point** — within epsilon of a core point but not core itself. Joins the
+  cluster from its edge.
+- **noise point** — neither core nor border. Belongs to no cluster.
+
+```text
+● ● ● ●
+
+  ● ● ●
+
+                      ×
+```
+
+```text
+● = dense region (cluster)
+× = noise
+```
+
+Implementation is `Phpml\Clustering\DBSCAN` (PHP-ML), Euclidean distance, strict
+`<` epsilon. Cluster ids are assigned in discovery order — deterministic for a fixed
+input order.
+
+> **Implementation note:** PHP-ML's `DBSCAN::cluster()` renumbers member keys
+> internally, destroying original sample indices. The wrapper reconstructs
+> assignments via multiset matching — identical vectors always receive identical
+> labels, so consumption in dataset order is unambiguous.
+
+## 12. Why noise becomes anomaly
+
+Be precise about what DBSCAN does and does not know:
+
+- DBSCAN has **no concept** of `security anomaly`, `attack`, or `failure`.
+- Its entire output vocabulary is: `cluster membership` and `noise`.
+
+The project applies one domain rule on top:
+
+```text
+noise → anomaly candidate
+```
+
+Rationale: in this feature space, "dense" means "behaves like the predominant traffic
+patterns"; a noise point matches no predominant pattern. That makes it interesting —
+a candidate for a human to look at.
+
+This is an **interpretation, not a proof**. Not every noise point is an attack: it may
+be a rare-but-legitimate request, a new endpoint nobody has hit yet, or one more
+5xx in an outage. The API says `{"anomaly": true}` — meaning *this record fits no
+dense pattern*, nothing stronger.
+
+## 13. No confidence score
+
+The API never returns:
+
+```json
+{"anomaly": true, "confidence": 0.97}
+```
+
+DBSCAN produces no probability. A point is a neighbor, a cluster member, or noise —
+there is no mathematical definition behind a "confidence" number for this output.
+Inventing one (or laundering distance-to-nearest-cluster into a fake probability)
+would be **misleading**: consumers would rank alerts by a number that measures
+nothing. So the project reports membership only, and says so plainly.
+
+## 14. Why `/detect` returns 501
+
+`POST /api/v1/detect` is intentionally `501 Not Implemented`.
+
+The current implementation runs DBSCAN **in batch**: every analysis clusters the full
+input at once. There is no trained model object with a `predict($newLog)` method, as
+supervised classifiers have.
+
+A real single-record detector would need to persist:
+
+```text
+training/reference vectors
+normalization parameters (min/max per feature)
+epsilon
+minimum_samples
+```
+
+…and define a **formal strategy** for classifying new points — e.g. "anomaly when the
+epsilon-neighborhood in the reference set has fewer than `minimum_samples` members".
+That is designed, deliberately not built. See [Limitations](#23-limitations).
+
+## 15. Architecture
+
+Ports and Adapters, kept small:
+
+```text
+        Flight (HTTP)
+            ↓
+       Controller          thin: validation → DTO → response, no ML/SQL
+            ↓
+       Application         AnalyzeLogs — pipeline orchestration
+            ↓
+         Domain            entities, value objects, PORTS
+            ↑
+      Infrastructure       adapters: PHP-ML wrapper, CSV loader,
+                           SQLite repositories
+```
+
+The **Domain** layer knows none of:
+
+```text
+Flight   ·   Phpml\   ·   SQLite
+```
+
+It declares **ports** (interfaces): `AnomalyDetector`, `CategoricalEncoder`,
+`Normalizer`, repositories, loader. Infrastructure implements them. Controllers call
+use cases; use cases call ports. Swapping PHP-ML for another library, or SQLite for
+Postgres, touches only Infrastructure.
+
+## 16. PHP-ML isolation
+
+The one hard boundary of the codebase:
+
+```text
+App\Domain\Anomaly\AnomalyDetector          (port — interface)
+              ↑ implements
+App\Infrastructure\MachineLearning\PhpMlDbscanDetector
+```
+
+The domain knows:
+
+```text
+detect(vectors)
+```
+
+It does **not** know:
+
+```text
+Phpml\Clustering\DBSCAN
+```
+
+`use Phpml\` appears **only** inside `app/Infrastructure/MachineLearning/` — enforced
+by convention, verified by review, and the reason `composer analyse` exists at level 8.
+
+## 17. Persistence
+
+Two tables in SQLite:
+
+```text
+analysis_runs    one row per analysis: algorithm, epsilon, minimum_samples,
+                 sample/cluster/anomaly counts, timestamps
+log_entries      one row per analyzed log, FK → analysis_runs
+```
+
+Run + entries are written **atomically in a single transaction**:
+
+```text
+BEGIN
+  ↓
+insert analysis_run
+  ↓
+insert log_entries (batch)
+  ↓
+COMMIT
+```
+
+On any failure mid-write:
+
+```text
+ROLLBACK   →  no orphan analysis_runs row
+```
+
+`log_entries.analysis_run_id` carries `FOREIGN KEY … ON DELETE CASCADE` — deleting a
+run removes its entries. `PRAGMA foreign_keys = ON` is set per connection. Locked by
+integration test.
+
+## 18. Dataset
+
+`datasets/development.csv` — 1,400 rows, generated by
+`php scripts/generate_dataset.php` with **seed 42** (always byte-identical).
 
 | Normal profiles | Injected anomaly kinds |
 |---|---|
@@ -127,71 +510,90 @@ own cluster:
 | `POST /api/search` · `GET /products/{id}` | vulnerability scanners (`/.env`, `/wp-admin.php`, …) at odd hours |
 | | slowloris-style slow requests |
 
-## Feature engineering
+~2.5% of rows are anomalies, spread across sparse sub-kinds so none becomes dense
+enough to form its own cluster.
 
-One vector per log entry — fixed layout, **33 dimensions**:
+**This is a synthetic, educational dataset.** It exists to validate behavior and let
+you experiment with known ground truth:
 
-| Block | Dims | Strategy |
+```text
+synthetic dataset ≠ production benchmark
+```
+
+## 19. Tests
+
+| Suite | Location | Contents |
 |---|---|---|
-| `method` | 9 | **one-hot** over a fixed HTTP verb enum — no fake ordinals |
-| `endpoint` | 16 | **feature hashing** (`crc32 % 16`); paths normalized first: query string dropped, only fully-numeric segments become `{n}` (`/users/1912` → `/users/{n}`; `/v2/users` and `/oauth2/callback` stay intact) |
-| `status_code` | 5 | **one-hot HTTP class** (`status_1xx` … `status_5xx`) — raw codes are categories, not quantities; a Euclidean metric over raw codes would imply fake relations (404 vs 500) |
-| `response_time` | 1 | raw numeric (ms) |
-| `request_size` | 1 | raw numeric (bytes) |
-| `hour` | 1 | raw numeric (0–23) |
+| **Unit** | `tests/Unit/` | `FeatureExtractor`, encoder, `Normalizer`, DBSCAN wrapper, value objects, geometry — isolated, no DB |
+| **Integration** | `tests/Integration/` | real SQLite + real migrations: repositories, atomic persistence, FK/cascade, full pipeline, HTTP controllers |
 
-### Normalization
+Highlight: **`FeatureGeometryTest`** documents — and locks — the mathematical
+decisions of [§10](#10-feature-geometry): same-profile records land inside epsilon;
+any single categorical mismatch (√2) lands outside. Change the geometry and this test
+forces the conversation.
 
-**Min-max** per feature, **fitted on the batch** (`Normalizer::fit()` → `FittedNormalizer`).
-The learned `min`/`max` parameters are reused for every `transform()` — never recomputed
-per record. A constant feature (`min == max`) maps to `0`.
+Deterministic everywhere: fixed datasets, seeded generator.
 
-## DBSCAN
+```bash
+composer test      # PHPUnit
+composer analyse   # PHPStan level 8 — never lowered
+composer check     # both
+```
 
-Implementation: `Phpml\Clustering\DBSCAN` (PHP-ML), Euclidean distance, strict `<` epsilon.
+There is no CI workflow and no deploy pipeline — quality gates run locally
+via `composer check`.
 
-| Parameter | Default | Allowed range |
-|---|---|---|
-| `epsilon` | 0.35 | 0.001 – 1000 |
-| `minimum_samples` | 5 | 1 – 10,000 |
+## 20. Running locally
 
-Semantics — exactly how the algorithm works:
+Requires PHP 8.4+ (`pdo`, `pdo_sqlite`, `mbstring`, `json`) and Composer 2.
 
-- **core point**: at least `minimum_samples` neighbors within `epsilon` (itself included)
-- **cluster**: core points plus everything density-reachable; ids assigned in discovery order (deterministic for a fixed input order)
-- **noise point**: belongs to no cluster → **anomaly**
-- **no** `confidence`, `probability`, or `accuracy`: DBSCAN does not produce them, so the API never returns them
+```bash
+git clone https://github.com/yanpenalva/log-anomaly-detector.git
+cd log-anomaly-detector
 
-> **Implementation note:** PHP-ML's `DBSCAN::cluster()` renumbers member keys internally
-> (`array_merge` in `groupByCluster`), destroying original sample indices. The wrapper
-> reconstructs assignments via multiset matching — identical vectors always receive
-> identical labels, so consumption in dataset order is unambiguous.
+composer install
+cp app/config/config_sample.php app/config/config.php
+cp .env.example .env
 
-### Feature geometry (locked by tests)
+php runway migrate
+composer start
+```
 
-The categorical blocks dominate Euclidean distances by design — this is what makes
-profiles separate. `FeatureGeometryTest` locks the behavior:
+Open `http://localhost:8000` — the dashboard. Paste logs, tune epsilon /
+minimum samples, run the analysis, inspect anomalies, browse persisted runs.
 
-| Scenario | Distance vs epsilon (0.5) |
-|---|---|
-| same endpoint + same method + numeric jitter | **inside** epsilon → neighbors |
-| same request, different endpoint bucket | √2 → **outside** epsilon |
-| same endpoint, different HTTP method | √2 → **outside** epsilon |
-| same status class (200 vs 201) / different class (200 vs 500) | inside / **outside** epsilon |
+Fresh database at any time: delete `database.sqlite`, run `php runway migrate`.
 
-Do not add weights, custom distances, or a new epsilon without evidence.
+## 21. Docker
 
-## API
+Docker is an **optional, reproducible local environment** — not a deployment target.
+
+```bash
+docker compose up --build
+```
+
+Same app on `http://localhost:8000`. No host PHP needed.
+
+The image is deliberately simple: PHP 8.4 CLI + Composer + `pdo_sqlite` + `mbstring`
++ the app. During build it copies `config_sample.php` → `config.php` (fresh clones
+have none), and migrations run on container start. `docker-compose.yml` provides the
+environment variables, which override config defaults at runtime via
+`Config::mergeEnv` — no `.env` file inside the container. SQLite data persists in a
+named volume.
+
+## 22. API
+
+All endpoints under `/api/v1`:
 
 | Method | Route | Description |
 |---|---|---|
 | `GET` | `/api/v1/health` | liveness |
 | `POST` | `/api/v1/analyze` | batch analysis + atomic persistence |
 | `GET` | `/api/v1/analysis` | recent runs (`?limit=1..200`) |
-| `GET` | `/api/v1/analysis/{id}` | run detail + anomalies (capped, with `anomalies_truncated`) |
-| `POST` | `/api/v1/detect` | **501** — see [Limitations](#limitations) |
+| `GET` | `/api/v1/analysis/{id}` | run detail + anomalies (capped, `anomalies_truncated`) |
+| `POST` | `/api/v1/detect` | **501** — see [§14](#14-why-detect-returns-501) |
 
-### `POST /api/v1/analyze`
+`POST /api/v1/analyze`:
 
 ```json
 {
@@ -204,54 +606,70 @@ Do not add weights, custom distances, or a new epsilon without evidence.
 }
 ```
 
+Response:
+
 ```json
 {"data": {"run_id": 5, "algorithm": "dbscan", "epsilon": 0.4,
           "minimum_samples": 5, "samples": 133, "clusters": 3, "anomalies": 3}}
 ```
 
-Errors: invalid JSON → `400`; non-object body → `400`; invalid log field → `422` (with the
-offending index); too many logs → `422`; oversized payload → `413`. Limits:
-`anomaly.max_payload_bytes` (2 MiB) and `anomaly.max_logs_per_request` (10k).
-The API **never** accepts a file path — inline logs only.
+Errors: invalid JSON → `400`; non-object body → `400`; invalid log field → `422`
+(with the offending index); too many logs → `422`; oversized payload → `413`.
+Limits: `anomaly.max_payload_bytes` (2 MiB), `anomaly.max_logs_per_request` (10k).
+The API **never** accepts filesystem paths — inline logs only.
 
-## Persistence
+## 23. Limitations
 
-SQLite via `flight\database\SimplePdo` (PDO), prepared statements, `PRAGMA foreign_keys = ON`
-set once at connection creation. No ORM, no serialized arrays, no `models` table.
+1. **Hash collisions** — distinct endpoints can share a bucket (hashing trick). With
+   16 buckets over a low post-normalization cardinality, practical impact is small;
+   it grows with endpoint diversity.
+2. **Linear `hour`** — 23 and 0 are maximally far apart though they are adjacent.
+   Cyclical sin/cos encoding was tested and rejected: with min-max + Euclidean it
+   spreads same-profile hours beyond epsilon and fragments clusters.
+3. **Min-max is outlier-sensitive** — one huge `request_size` stretches the scale and
+   compresses everything else toward 0. Z-score or robust scaling are alternatives.
+4. **DBSCAN is batch-only** — every analysis re-clusters the full input; no
+   incremental inference (hence the 501, [§14](#14-why-detect-returns-501)).
+5. **Exact HTTP status is lost** after class encoding — within one class, `404` vs
+   `400` are indistinguishable to the model. Deliberate, to avoid ordinal artifacts.
+6. **Synthetic dataset** — validates behavior; says nothing about real traffic
+   distributions.
+7. **Categorical features dominate the Euclidean geometry** — by design ([§10](#10-feature-geometry)),
+   any single categorical mismatch alone exceeds epsilon, so numeric differences
+   only separate records *within* an agreeing group. Useful here, but it means the
+   model is nearly blind to numeric-only anomalies inside a dense profile.
 
-| Table | Columns |
+## 24. Experiments to try
+
+The fastest way to *understand* DBSCAN is to watch it break. Each experiment below
+changes one thing — observe cluster count, noise count, and which records flip.
+
+| Experiment | What to watch |
 |---|---|
-| `analysis_runs` | `id, algorithm, epsilon, minimum_samples, sample_count, cluster_count, anomaly_count, started_at, finished_at` |
-| `log_entries` | `id, analysis_run_id (FK → analysis_runs ON DELETE CASCADE), method, endpoint, status_code, response_time, request_size, hour, is_anomaly, cluster (NULL = noise), created_at` |
+| **Increase `epsilon`** (0.35 → 0.5 → 1.0) | more points become neighbors → clusters may merge → noise usually decreases; too far and distinct profiles fuse into one blob |
+| **Decrease `epsilon`** | neighborhoods shrink → clusters fragment → noise increases until nearly everything is noise |
+| **Increase `minimum_samples`** (5 → 10 → 20) | harder to form dense regions → small clusters dissolve into noise |
+| **Change endpoint buckets** (`endpoint_hash_buckets`: 8 / 16 / 64) | fewer buckets → more collisions, distinct endpoints merge; more buckets → the same physical endpoint set spreads over more dimensions (still √2 between any two buckets — geometry is bucket-count-invariant) |
+| **Remove one feature** from `FeatureExtractor` | e.g. drop `hour`: does slowloris still separate? The answer tells you which feature carries which anomaly kind |
+| **Replace min-max with Z-score** | outlier sensitivity changes; watch how slow requests and payload floods re-rank |
+| **Change the dataset distribution** (`scripts/generate_dataset.php`) | e.g. make one "anomaly kind" 10% of traffic — it becomes dense and *stops being flagged*: the noise→anomaly heuristic only sees rarity, not intent |
+| **Introduce more anomaly kinds** | watch noise count vs per-kind density; inject enough of one kind and it earns its own cluster |
+| **Compare geometry by hand** | compute √2 vs epsilon for two records differing in exactly one categorical block — verify against `FeatureGeometryTest` |
 
-Run + entries are written inside a single transaction (`AnalysisResultRepository::save`);
-a failure mid-write leaves no orphan `analysis_runs` row (locked by test).
+Experiment 3 in the "distribution" row is the deepest lesson in this README:
+**the algorithm measures density; only your interpretation decides what density
+means.**
 
-## Limitations
-
-1. **`/detect` is intentionally a 501.** DBSCAN is a batch algorithm — there is no trained
-   state that can classify a single new point incrementally. The technically correct
-   extension would persist normalized training vectors and classify a new point by its
-   epsilon-neighborhood (anomaly when neighbors < `minimum_samples`). Designed, not built.
-2. **Hash collisions**: distinct endpoints may share a bucket (hashing trick). With 16
-   buckets over a low cardinality of normalized paths, practical impact is small.
-3. **Linear `hour`**: 23 and 0 are far apart. Cyclical sin/cos encoding was tested and
-   rejected here: with min-max + Euclidean distance it spreads same-profile hours beyond
-   epsilon and fragments clusters.
-4. **Min-max is outlier-sensitive** (stretches the scale). Z-score or robust scaling are
-   natural alternatives.
-5. **Batch-only**: every analysis re-clusters the full input. No incremental learning.
-6. **Exact status code is dropped** after class encoding (2xx/…/5xx). Within one class,
-   404 vs 400 are indistinguishable to the model — deliberate, to avoid ordinal artifacts.
-
-## Roadmap
+## 25. Roadmap
 
 - [x] **V1** — boilerplate removal, SQLite, CSV dataset, domain model, feature extraction, encoding, normalization, DBSCAN, tests
 - [x] **V2** — analysis persistence, `/health`, `/analyze`, typed per-endpoint error handling
-- [x] **V2.5** — dashboard, atomic persistence with FK integrity, CI, Docker
-- [ ] **V3** — Nginx access.log parser, batch analysis CLI
+- [x] **V2.5** — dashboard, atomic persistence with FK integrity, Docker
+- [ ] **V3** — Nginx `access.log` parser, batch analysis CLI
 - [ ] **V4** — DBSCAN vs K-Means (and other PHP-ML techniques) compared with metrics that fit each family (density-based vs centroid-based)
 - [ ] **V5** — benchmarking, statistics, advanced visualization
+
+No deployment/infrastructure roadmap — this is a study project.
 
 ## License
 

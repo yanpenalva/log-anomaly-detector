@@ -13,22 +13,9 @@ use Phpml\Math\Distance\Euclidean;
 use RuntimeException;
 
 /**
- * PHP-ML DBSCAN wrapped behind the domain port.
- *
- * How DBSCAN is used here (and what it genuinely provides):
- *  - A point is a CORE point when its epsilon-neighborhood (Euclidean,
- *    strict "<") contains at least minimumSamples points (itself included).
- *  - Core points and everything density-reachable from them form clusters.
- *  - Points that end up in no cluster are NOISE. In this domain, a noise
- *    point is an anomaly: its neighborhood is too sparse to belong to any
- *    known traffic pattern.
- *
- * DBSCAN provides no probability, confidence or score — only membership.
- * Cluster ids are the order in which clusters were discovered (0, 1, 2, ...)
- * and are deterministic for a fixed input order.
- *
- * This is a BATCH algorithm: every call re-clusters the given samples.
- * There is no incremental "classify one new point" inference.
+ * PHP-ML DBSCAN behind the domain port. Euclidean distance, strict "<"
+ * epsilon, batch-only, membership only (no confidence). Cluster ids follow
+ * discovery order and are deterministic for a fixed input order.
  */
 final readonly class PhpMlDbscanDetector implements AnomalyDetector
 {
@@ -57,12 +44,9 @@ final readonly class PhpMlDbscanDetector implements AnomalyDetector
     }
 
     /**
-     * PHP-ML's DBSCAN::cluster() renumbers member keys per cluster
-     * (array_merge inside groupByCluster), so the original sample index
-     * is lost in the output. Recover it via multiset matching: identical
-     * vectors always receive identical DBSCAN labels (same distances to
-     * every point), so each cluster owns a disjoint multiset of vectors
-     * and dataset-order consumption is unambiguous.
+     * PHP-ML renumbers member keys inside cluster(), losing original sample
+     * indices. Identical vectors always receive identical labels, so a
+     * multiset match per cluster restores dataset-order assignments.
      *
      * @param list<list<float>> $samples
      * @param array<int, array<int, list<float>>> $clusters

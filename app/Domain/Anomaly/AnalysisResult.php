@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Anomaly;
 
 /**
- * A persisted analysis run plus the per-log classification it produced.
+ * Persisted analysis run plus the per-log classification it produced.
  */
 final readonly class AnalysisResult
 {

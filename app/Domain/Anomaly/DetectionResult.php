@@ -5,17 +5,13 @@ declare(strict_types=1);
 namespace App\Domain\Anomaly;
 
 /**
- * Outcome of one DBSCAN pass over an ordered list of feature vectors.
- *
- * DBSCAN does not produce probabilities or confidence scores. A sample is
- * either assigned to a cluster (including border points) or is a noise
- * point; in this domain a noise point is an anomaly.
+ * Outcome of one DBSCAN pass. DBSCAN produces no confidence: cluster id
+ * per sample, null for noise — which this domain reports as an anomaly.
  */
 final readonly class DetectionResult
 {
     /**
-     * @param list<int|null> $clusterAssignments Cluster id per sample index,
-     *                                           null when the sample is noise
+     * @param list<int|null> $clusterAssignments
      */
     public function __construct(private array $clusterAssignments)
     {

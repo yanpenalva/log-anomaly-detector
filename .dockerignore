@@ -1,0 +1,23 @@
+# VCS / CI
+.git
+.github
+
+# Local environment & secrets — never bake into the image
+.env
+.runway-creds.json
+app/config/config.php
+
+# Local build/dev artifacts
+vendor
+database.sqlite
+coverage
+clover.xml
+.phpunit.result.cache
+.phpunit.cache
+.vscode
+.vagrant
+Vagrantfile
+
+# Runtime output (recreated inside the container)
+app/cache/*
+app/log/*

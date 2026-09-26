@@ -5,15 +5,10 @@ declare(strict_types=1);
 namespace App\Utils;
 
 /**
- * Minimal first-party .env loader. Only used at bootstrap.
- * Controllers/middleware/models must not call this or read $_ENV.
+ * Minimal .env loader for bootstrap only — never in controllers/middleware/models.
  */
 final class Env
 {
-    /**
-     * Load KEY=VALUE pairs from a .env file into putenv / $_ENV / $_SERVER
-     * without overwriting variables already present in the real environment.
-     */
     public static function load(string $path): void
     {
         if (!is_file($path) || !is_readable($path)) {
@@ -32,7 +27,6 @@ final class Env
                 continue;
             }
 
-            // Support optional "export KEY=..."
             if (strpos($line, 'export ') === 0) {
                 $line = trim(substr($line, 7));
             }

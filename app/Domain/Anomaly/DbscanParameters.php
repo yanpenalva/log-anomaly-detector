@@ -7,13 +7,8 @@ namespace App\Domain\Anomaly;
 use InvalidArgumentException;
 
 /**
- * DBSCAN hyper-parameters.
- *
- * epsilon: neighborhood radius (Euclidean distance on normalized feature
- *          vectors). Points closer than epsilon are neighbors. PHP-ML uses
- *          a strict "<" comparison.
- * minimumSamples: minimum number of points inside a point's epsilon
- *          neighborhood (including itself) for it to be a core point.
+ * DBSCAN hyper-parameters: epsilon (neighborhood radius, strict "<") and
+ * minimumSamples (core-point density threshold, itself included).
  */
 final readonly class DbscanParameters
 {

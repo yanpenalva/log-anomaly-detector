@@ -6,9 +6,6 @@ namespace App\Domain\Anomaly;
 
 use DateTimeImmutable;
 
-/**
- * Row of the analysis_runs table.
- */
 final readonly class AnalysisRun
 {
     public function __construct(

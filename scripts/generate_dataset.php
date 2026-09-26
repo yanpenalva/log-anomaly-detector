@@ -4,10 +4,6 @@ declare(strict_types=1);
 
 /**
  * Deterministic development dataset generator for the DBSCAN pipeline.
- *
- * Produces realistic multi-cluster HTTP traffic plus injected anomalies so
- * DBSCAN behavior (clusters + noise) can be validated meaningfully.
- *
  * Usage: php scripts/generate_dataset.php [rows] > datasets/development.csv
  * Same seed → same dataset.
  */
@@ -19,7 +15,6 @@ mt_srand($seed);
 
 function gauss(float $mean, float $stdDev): float
 {
-    // Box-Muller (uniform pair from mt_rand)
     $u1 = mt_rand() / mt_getrandmax();
     $u2 = mt_rand() / mt_getrandmax();
     if ($u1 < 1e-12) {
@@ -35,7 +30,7 @@ function clamp(float $value, float $min, float $max): float
 }
 
 /**
- * Traffic profiles: [method, endpoint fn, status, rt mean/std, size mean/std, hours]
+ * Traffic profiles: [method, endpoint fn, status, rt mean/std, size mean/std, hours].
  * Each profile is a density blob DBSCAN should discover as one cluster.
  */
 $profiles = [
@@ -49,60 +44,104 @@ $profiles = [
 
 $anomalyRate = 0.025;
 
+/**
+ * @param list<array{string, callable(): string, int, float, float, float, float, list<int>}> $profiles
+ *
+ * @return array{string, string, int, float, float, int}
+ */
+function normalRow(array $profiles): array
+{
+    [$method, $endpointFn, $status, $rtMean, $rtStd, $sizeMean, $sizeStd, $hours] =
+        $profiles[mt_rand(0, count($profiles) - 1)];
+
+    $endpoint = $endpointFn();
+    if (mt_rand(0, 100) < 2) {
+        $status = 404;
+    }
+
+    return [
+        $method,
+        $endpoint,
+        $status,
+        max(1.0, gauss($rtMean, $rtStd)),
+        max(1.0, gauss($sizeMean, $sizeStd)),
+        $hours[mt_rand(0, count($hours) - 1)],
+    ];
+}
+
+/** Sparse anomaly sub-kinds — each stays too rare to form its own DBSCAN cluster. */
+function anomalyRow(): array
+{
+    return match (mt_rand(1, 10)) {
+        1, 2 => errorBurstRow(),
+        3, 4 => payloadFloodRow(),
+        5, 6, 7 => scannerRow(),
+        default => slowlorisRow(),
+    };
+}
+
+/** @return array{string, string, int, float, float, int} */
+function errorBurstRow(): array
+{
+    return [
+        'POST',
+        ['/payments', '/api/search', '/users'][mt_rand(0, 2)],
+        [500, 502, 503, 504][mt_rand(0, 3)],
+        clamp(gauss(4500.0, 1800.0), 2500.0, 9500.0),
+        clamp(gauss(2400.0, 1000.0), 500.0, 5500.0),
+        mt_rand(0, 23),
+    ];
+}
+
+/** @return array{string, string, int, float, float, int} */
+function payloadFloodRow(): array
+{
+    return [
+        'POST',
+        ['/payments', '/api/search', '/users'][mt_rand(0, 2)],
+        [200, 201, 413][mt_rand(0, 2)],
+        clamp(gauss(2600.0, 1500.0), 700.0, 7500.0),
+        clamp(gauss(170000.0, 80000.0), 55000.0, 340000.0),
+        mt_rand(0, 23),
+    ];
+}
+
+/** @return array{string, string, int, float, float, int} */
+function scannerRow(): array
+{
+    return [
+        'GET',
+        ['/wp-admin.php', '/.env', '/admin/config.php', '/phpmyadmin/', '/.git/config', '/setup.php', '/shell.php'][mt_rand(0, 6)],
+        [400, 403, 404][mt_rand(0, 2)],
+        clamp(gauss(12.0, 9.0), 1.0, 60.0),
+        clamp(gauss(70.0, 50.0), 5.0, 250.0),
+        mt_rand(0, 5),
+    ];
+}
+
+/** @return array{string, string, int, float, float, int} */
+function slowlorisRow(): array
+{
+    return [
+        'GET',
+        ['/users', '/users/' . mt_rand(1, 5000), '/products/' . mt_rand(1, 900)][mt_rand(0, 2)],
+        200,
+        clamp(gauss(9500.0, 3000.0), 5500.0, 16000.0),
+        clamp(gauss(1000.0, 450.0), 100.0, 2800.0),
+        mt_rand(0, 23),
+    ];
+}
+
 echo 'method,endpoint,status_code,response_time,request_size,hour' . PHP_EOL;
 
 $written = 0;
 while ($written < $rowTarget) {
-    if (mt_rand() / mt_getrandmax() < $anomalyRate) {
-        // Injected anomalies: many sparse sub-kinds (endpoint x status x
-        // parameter range) so none of them becomes dense enough to form
-        // its own DBSCAN cluster — they should surface as noise points.
-        $kind = mt_rand(1, 10);
-        if ($kind <= 2) {
-            // error bursts spread over endpoints and server statuses
-            $method = 'POST';
-            $endpoint = ['/payments', '/api/search', '/users'][mt_rand(0, 2)];
-            $status = [500, 502, 503, 504][mt_rand(0, 3)];
-            $rt = clamp(gauss(4500.0, 1800.0), 2500.0, 9500.0);
-            $size = clamp(gauss(2400.0, 1000.0), 500.0, 5500.0);
-            $hour = mt_rand(0, 23);
-        } elseif ($kind <= 4) {
-            // massive payload floods
-            $method = 'POST';
-            $endpoint = ['/payments', '/api/search', '/users'][mt_rand(0, 2)];
-            $status = [200, 201, 413][mt_rand(0, 2)];
-            $rt = clamp(gauss(2600.0, 1500.0), 700.0, 7500.0);
-            $size = clamp(gauss(170000.0, 80000.0), 55000.0, 340000.0);
-            $hour = mt_rand(0, 23);
-        } elseif ($kind <= 7) {
-            // vulnerability scanner at odd hours
-            $method = 'GET';
-            $endpoint = ['/wp-admin.php', '/.env', '/admin/config.php', '/phpmyadmin/', '/.git/config', '/setup.php', '/shell.php'][mt_rand(0, 6)];
-            $status = [400, 403, 404][mt_rand(0, 2)];
-            $rt = clamp(gauss(12.0, 9.0), 1.0, 60.0);
-            $size = clamp(gauss(70.0, 50.0), 5.0, 250.0);
-            $hour = mt_rand(0, 5);
-        } else {
-            // slowloris-like slow requests
-            $method = 'GET';
-            $endpoint = ['/users', '/users/' . mt_rand(1, 5000), '/products/' . mt_rand(1, 900)][mt_rand(0, 2)];
-            $status = 200;
-            $rt = clamp(gauss(9500.0, 3000.0), 5500.0, 16000.0);
-            $size = clamp(gauss(1000.0, 450.0), 100.0, 2800.0);
-            $hour = mt_rand(0, 23);
-        }
-    } else {
-        $profile = $profiles[mt_rand(0, count($profiles) - 1)];
-        [$method, $endpointFn, $status, $rtMean, $rtStd, $sizeMean, $sizeStd, $hours] = $profile;
-        $endpoint = $endpointFn();
-        if (mt_rand(0, 100) < 2) {
-            // occasional client error inside normal traffic (still dense region)
-            $status = 404;
-        }
-        $rt = max(1.0, gauss($rtMean, $rtStd));
-        $size = max(1.0, gauss($sizeMean, $sizeStd));
-        $hour = $hours[mt_rand(0, count($hours) - 1)];
-    }
+    [$method, $endpoint, $status, $rt, $size, $hour] = match (
+        mt_rand() / mt_getrandmax() < $anomalyRate
+    ) {
+        true => anomalyRow(),
+        false => normalRow($profiles),
+    };
 
     printf(
         "%s,%s,%d,%d,%d,%d\n",

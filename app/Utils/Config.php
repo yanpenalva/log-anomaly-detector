@@ -4,22 +4,12 @@ declare(strict_types=1);
 
 namespace App\Utils;
 
-/**
- * Immutable-ish configuration bag built once at bootstrap from
- * config.php defaults + .env overlay (see mergeEnv).
- *
- * Inject this class into controllers/middleware/models.
- * Do not read $_ENV outside bootstrap/env merge.
- */
 final class Config
 {
     /** @var array<string,mixed> */
     private $data;
 
     /**
-     * Explicit map of environment variable name => dotted config path.
-     * Env wins when the variable is set and non-empty.
-     *
      * @var array<string,string>
      */
     public const ENV_MAP = [
@@ -37,17 +27,13 @@ final class Config
         'ANOMALY_MINIMUM_SAMPLES' => 'anomaly.minimum_samples',
     ];
 
-    /**
-     * @param array<string,mixed> $data Merged configuration array
-     */
+    /** @param array<string,mixed> $data */
     public function __construct(array $data)
     {
         $this->data = $data;
     }
 
     /**
-     * Get a value by dotted key path (e.g. "database.host").
-     *
      * @param string $key
      * @param mixed  $default
      * @return mixed
@@ -95,10 +81,6 @@ final class Config
         return (string) $this->get('app.env', 'production');
     }
 
-    /**
-     * Application base URL with a trailing slash so templates can
-     * safely join paths: {{ base_url }}health → /myapp/health
-     */
     public function baseUrl(): string
     {
         $url = (string) $this->get('app.base_url', '/');
@@ -110,11 +92,10 @@ final class Config
     }
 
     /**
-     * Overlay mapped environment variables onto file config.
-     * Env wins when the variable is set and the string is non-empty.
+     * Env wins for mapped keys when set and non-empty.
      *
-     * @param array<string,mixed>  $fileConfig From config.php (literals only)
-     * @param array<string,mixed>  $env        Typically $_ENV after loadEnv
+     * @param array<string,mixed> $fileConfig
+     * @param array<string,mixed> $env
      * @return array<string,mixed>
      */
     public static function mergeEnv(array $fileConfig, array $env): array
@@ -139,8 +120,6 @@ final class Config
     }
 
     /**
-     * @param string $path
-     * @param string $raw
      * @return mixed
      */
     private static function castEnvValue(string $path, string $raw)
@@ -154,7 +133,6 @@ final class Config
 
     /**
      * @param array<string,mixed> $data
-     * @param string              $path Dotted path
      * @param mixed               $value
      */
     private static function setPath(array &$data, string $path, $value): void

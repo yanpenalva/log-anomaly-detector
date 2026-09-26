@@ -10,9 +10,7 @@ use App\Domain\Anomaly\Normalizer;
 use InvalidArgumentException;
 
 /**
- * Min-max scaling to [0, 1]. Parameters are learned once per batch with
- * fit() and reused for every transform — never recomputed per request.
- * A constant feature (min == max) maps to 0.0 instead of dividing by zero.
+ * Min-max scaling to [0, 1]; parameters learned once per batch with fit().
  */
 final readonly class MinMaxNormalizer implements Normalizer
 {

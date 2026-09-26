@@ -8,15 +8,8 @@ use flight\database\SimplePdo;
 use InvalidArgumentException;
 use PDO;
 
-/**
- * Builds a SimplePdo connection from Config.
- * Shared helper for bootstrap services and CLI (migrate).
- */
 final class DatabaseFactory
 {
-    /**
-     * Whether database is configured (driver non-empty).
-     */
     public static function isEnabled(Config $config): bool
     {
         $driver = (string) $config->get('database.driver', '');
@@ -56,9 +49,6 @@ final class DatabaseFactory
         ), $driver);
     }
 
-    /**
-     * Connection-level setup applied once, never in repositories.
-     */
     private static function bootConnection(SimplePdo $pdo, string $driver): SimplePdo
     {
         if ($driver === 'sqlite') {

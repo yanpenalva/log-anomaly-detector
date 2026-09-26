@@ -7,17 +7,11 @@ namespace App\Middleware;
 use flight\Engine;
 use Tracy\Debugger;
 
-/**
- * Canonical middleware example — constructor injection + before().
- */
 class SecurityHeadersMiddleware
 {
     /** @var Engine */
     private $app;
 
-    /**
-     * @param Engine $app
-     */
     public function __construct(Engine $app)
     {
         $this->app = $app;

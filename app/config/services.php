@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 /**
  * Services + Dice DI wiring.
  *
@@ -35,24 +37,19 @@ use Tracy\Debugger;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
 
-// Runway loads config.php then services.php for config:get/set. No Engine yet.
 if (!isset($app) || !($app instanceof Engine) || !($config instanceof Config)) {
     return;
 }
 
-// ---------------------------------------------------------------------------
-// Tracy
-// ---------------------------------------------------------------------------
 $logDir = $projectRoot . $ds . 'app' . $ds . 'log';
 if (!is_dir($logDir)) {
     mkdir($logDir, 0775, true);
 }
 
-if ($config->isDebug()) {
-    Debugger::enable(Debugger::Development);
-} else {
-    Debugger::enable(Debugger::Production);
-}
+Debugger::enable(match ($config->isDebug()) {
+    true => Debugger::Development,
+    false => Debugger::Production,
+});
 Debugger::$logDirectory = $logDir;
 Debugger::$strictMode = true;
 
@@ -60,21 +57,14 @@ if (Debugger::$showBar === true && PHP_SAPI !== 'cli' && class_exists(TracyExten
     new TracyExtensionLoader($app);
 }
 
-// ---------------------------------------------------------------------------
-// Database (SimplePdo) — optional if driver is empty
-// ---------------------------------------------------------------------------
 $db = null;
 if (DatabaseFactory::isEnabled($config)) {
     $db = DatabaseFactory::create($config);
-    // Optional Flight::db() for ecosystem code; app layer should inject SimplePdo
     $app->map('db', function () use ($db) {
         return $db;
     });
 }
 
-// ---------------------------------------------------------------------------
-// Twig
-// ---------------------------------------------------------------------------
 $viewsPath = $projectRoot . $ds . 'app' . $ds . 'views';
 $twigCache = $projectRoot . $ds . 'app' . $ds . 'cache' . $ds . 'twig';
 if (!is_dir($twigCache)) {
@@ -95,16 +85,12 @@ $twig->addGlobal('base_url', $config->baseUrl());
 
 // Map Flight render → Twig (single documented view path)
 $app->map('render', function (string $template, array $data = []) use ($app, $twig) {
-    // Allow "welcome" or "welcome.twig"
     if (substr($template, -5) !== '.twig') {
         $template .= '.twig';
     }
     $app->response()->write($twig->render($template, $data));
 });
 
-// ---------------------------------------------------------------------------
-// Anomaly detection pipeline (requires SimplePdo for persistence)
-// ---------------------------------------------------------------------------
 $anomalySubstitutions = [];
 if ($db instanceof SimplePdo) {
     $encoder = new LogCategoricalEncoder(
@@ -121,12 +107,9 @@ if ($db instanceof SimplePdo) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Dice + Engine substitutions (required — see Flight DI docs)
-// ---------------------------------------------------------------------------
+// Critical: reuse the same Engine instance; do not construct a new one
 $container = new Dice();
 
-// Critical: reuse the same Engine instance; do not construct a new one
 $substitutions = [
     Engine::class => $app,
     Config::class => $config,
@@ -143,7 +126,6 @@ $container = $container->addRule('*', [
     'substitutions' => $substitutions,
 ]);
 
-// Shared rules for classes resolved by name (belt + suspenders)
 $container = $container->addRule(Config::class, ['shared' => true]);
 $container = $container->addRule(Environment::class, ['shared' => true]);
 if ($db instanceof SimplePdo) {
@@ -154,7 +136,6 @@ $app->registerContainerHandler(function ($class, $params) use ($container) {
     return $container->create($class, $params);
 });
 
-// Helper for non-route code: $app->make(SomeClass::class)
 $app->map('make', function ($class, $params = []) use ($container) {
     return $container->create($class, $params);
 });

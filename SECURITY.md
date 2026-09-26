@@ -1,4 +1,4 @@
-# Security Policy — FlightPHP Skeleton
+# Security Policy — log-anomaly-detector
 
 Security-related expectations for this application. **AI tools and humans** should treat this as authoritative for secrets, headers, input handling, and reporting. Root [AGENTS.md](AGENTS.md) points here so security stays deliberate and separate from general coding style.
 
@@ -6,13 +6,13 @@ Security-related expectations for this application. **AI tools and humans** shou
 
 ## Reporting a vulnerability
 
-If you believe you found a security issue in **this skeleton template** (not a site built from it by someone else):
+If you believe you found a security issue in this repository:
 
-1. Prefer a **private** report to the maintainers (e.g. GitHub Security Advisory on the skeleton repository, or the contact listed in the package metadata / org security policy).
+1. Prefer a **private** report to the maintainers (e.g. GitHub Security Advisory on this repository, or the contact listed in the package metadata / org security policy).
 2. Do **not** open a public issue with exploit details until a fix is available or maintainers confirm disclosure is OK.
 3. Include: affected version/commit, reproduction steps, impact, and any suggested fix.
 
-For apps **you** deploy from this skeleton, you own runtime security (hosting, TLS, backups, dependency updates).
+This is a study/portfolio project, not a deployed service — but if you run it anywhere reachable, you own the runtime security of that instance (hosting, TLS, backups, dependency updates).
 
 ---
 
@@ -20,7 +20,7 @@ For apps **you** deploy from this skeleton, you own runtime security (hosting, T
 
 | Do | Do not |
 |----|--------|
-| Put secrets in **`.env`** (gitignored) or the real environment | Commit passwords, API keys, session encryption keys, or private tokens |
+| Put secrets in **`.env`** (gitignored) or the real environment | Commit passwords, API keys, or private tokens |
 | Keep `config.php` defaults empty for passwords | Use `runway config:set` to write real production secrets into a file you commit |
 | Use `App\Utils\Config` after bootstrap merge | Read `$_ENV` / `getenv` inside controllers, middleware, models, or Twig |
 | Put `$_ENV[...]` expressions only in the env loader / merge map | Put `$_ENV` expressions inside `config.php` (Runway rewrites them to literals and can bake secrets into the file) |
@@ -39,7 +39,7 @@ For apps **you** deploy from this skeleton, you own runtime security (hosting, T
 
 ## HTTP security headers
 
-This skeleton ships `App\Middleware\SecurityHeadersMiddleware` with:
+The project ships `App\Middleware\SecurityHeadersMiddleware` with:
 
 - `Content-Security-Policy` (nonce for scripts; see CSP below)
 - `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`
@@ -67,18 +67,8 @@ When adding pages with third-party scripts, styles, or iframes, **update CSP del
 
 ## Database and SQL
 
-- Use **prepared statements** / SimplePdo helpers with bound parameters.
-- ActiveRecord condition helpers (`eq`, `like`, etc.) — do not interpolate untrusted strings into raw `where()` SQL.
+- Use **prepared statements** / SimplePdo helpers with bound parameters — do not interpolate untrusted strings into raw SQL.
 - Migrations are developer-controlled SQL; do not run user-supplied SQL as migrations.
-
----
-
-## Sessions and authentication
-
-- Prefer **`flightphp/session`** (already wired) over raw `$_SESSION`.
-- When you add login: regenerate session id after privilege change; use HTTPS in production; set cookie flags appropriately for your deploy.
-- Do not store passwords in plain text; use `password_hash` / `password_verify` (or a maintained auth library).
-- CSRF protection is **not** shipped by default in this minimal skeleton — if you add cookie-session form POSTs that change state, add CSRF (or equivalent) and document it; see Flight security docs.
 
 ---
 
@@ -94,7 +84,7 @@ When adding pages with third-party scripts, styles, or iframes, **update CSP del
 
 - Invent “temporary” hardcoded admin passwords or API keys in source.
 - Disable security middleware or CSP without replacing with an equal or stronger control.
-- Log full session cookies, passwords, or card data.
+- Log credentials, passwords, or card data.
 - Add file-upload endpoints without type/size checks and storage outside the web root (or with safe serving).
 - Assume Flight facades or Laravel-style auth exist — verify in vendor/docs.
 

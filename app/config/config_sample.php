@@ -3,7 +3,7 @@
 /**
  * Project defaults — literal array only (Runway-safe).
  *
- * Copy to config.php (composer create-project does this for you).
+ * Copy to config.php: `cp app/config/config_sample.php app/config/config.php`
  * Secrets and deploy-specific values belong in .env (see .env.example).
  *
  * Do NOT put $_ENV expressions here: `runway config:set` rewrites this
@@ -22,7 +22,7 @@ return [
         'timezone' => 'UTC',
     ],
     'database' => [
-        // sqlite (default — works after create-project with no MySQL)
+        // sqlite (default — works right after a clean clone, no MySQL needed)
         // or mysql. Empty string disables DB registration and analysis routes.
         'driver' => 'sqlite',
         'host' => 'localhost',

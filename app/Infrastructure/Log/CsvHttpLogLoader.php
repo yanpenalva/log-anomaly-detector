@@ -10,14 +10,9 @@ use App\Domain\Anomaly\InvalidHttpLogEntry;
 use SplFileObject;
 
 /**
- * Reads CSV datasets of HTTP logs: file → validation → HttpLogEntry[].
- *
- * Expected header (column order is free, all columns required):
- *   method,endpoint,status_code,response_time,request_size,hour
- *
- * The loader only ever reads paths given by trusted callers (CLI/tests);
- * the HTTP API accepts inline logs and never a path, so no untrusted path
- * ever reaches this class.
+ * CSV dataset → validation → HttpLogEntry[].
+ * Header: method,endpoint,status_code,response_time,request_size,hour.
+ * Only trusted callers (CLI/tests) pass paths; the HTTP API accepts inline logs.
  */
 final class CsvHttpLogLoader implements HttpLogLoader
 {

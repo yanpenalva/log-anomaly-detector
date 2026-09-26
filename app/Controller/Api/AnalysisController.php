@@ -17,10 +17,6 @@ use flight\Engine;
 use InvalidArgumentException;
 use JsonException;
 
-/**
- * Thin HTTP boundary: Request → validation → DTO (domain objects)
- * → application use case → JSON response. No ML or SQL logic here.
- */
 final readonly class AnalysisController
 {
     private const MAX_JSON_DEPTH = 16;
@@ -77,12 +73,8 @@ final readonly class AnalysisController
     }
 
     /**
-     * DBSCAN is a batch algorithm: it has no trained state from which a
-     * single new point could be classified incrementally. A technically
-     * sound /detect would persist the normalized training vectors and
-     * check the epsilon-neighborhood of the new point (noise when fewer
-     * than minimumSamples neighbors). Until that exists, refuse honestly
-     * instead of faking a prediction.
+     * DBSCAN is batch-only: no trained state can classify a single new
+     * point. Refuse honestly instead of faking a prediction.
      */
     public function detect(): void
     {
@@ -150,8 +142,6 @@ final readonly class AnalysisController
     }
 
     /**
-     * Raw request body as a JSON object, with transport-level guards.
-     *
      * @return array<string, mixed>|null
      */
     private function decodedBody(): ?array

@@ -26,7 +26,7 @@ Do **not** move commands to `app/Command/` without updating Runway discovery (`.
 5. **App config / DB:** load like `MigrateCommand` does — `Env::load`, `require config.php`, `Config::mergeEnv`, `DatabaseFactory::create`. Do not assume web bootstrap already ran with Dice.
 6. **`services.php` early-return:** Runway requires `services.php` with **array** `$config` and no Engine. Full Tracy/Dice wiring is skipped — your command must be self-contained for config/DB.
 7. **Only document commands that exist** after `php runway --help`.
-8. **Do not** productize around `ai:init` / `ai:generate-instructions` for this skeleton’s story.
+8. **Do not** productize around `ai:init` / `ai:generate-instructions` — this project has no use for them.
 
 ## Pattern
 

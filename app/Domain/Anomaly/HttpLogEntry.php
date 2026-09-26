@@ -16,9 +16,6 @@ final readonly class HttpLogEntry
     private const INTEGER_PATTERN = '/^\d+$/';
     private const DECIMAL_PATTERN = '/^\d+(\.\d+)?$/';
 
-    /**
-     * Field order defines the canonical public representation (see toArray).
-     */
     private const REQUIRED_FIELDS = ['method', 'endpoint', 'status_code', 'response_time', 'request_size', 'hour'];
 
     public function __construct(

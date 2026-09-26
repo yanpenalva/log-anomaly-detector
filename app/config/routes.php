@@ -21,7 +21,7 @@ $router->group('', function (Router $router) use ($config) {
     $router->group('/api/v1', function (Router $router) use ($config) {
         $router->get('/health', [HealthController::class, 'health']);
 
-        // Analysis routes need SimplePdo. Skip when DB is disabled (driver '').
+        // Analysis routes require SimplePdo — skipped when the driver is empty
         if (DatabaseFactory::isEnabled($config)) {
             $router->post('/analyze', [AnalysisController::class, 'analyze']);
             $router->post('/detect', [AnalysisController::class, 'detect']);

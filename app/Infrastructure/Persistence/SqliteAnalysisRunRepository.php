@@ -12,8 +12,7 @@ use flight\database\SimplePdo;
 use flight\util\Collection;
 
 /**
- * Read-side analysis run queries. Writes belong to the atomic
- * SqliteAnalysisResultRepository.
+ * Read-side run queries; writes belong to SqliteAnalysisResultRepository.
  */
 final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepository
 {
@@ -43,8 +42,6 @@ final readonly class SqliteAnalysisRunRepository implements AnalysisRunRepositor
     }
 
     /**
-     * SimplePdo::fetchAll wraps each row in a Collection.
-     *
      * @return array<string, mixed>
      */
     private function rowToArray(mixed $row): array

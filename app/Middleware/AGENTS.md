@@ -8,7 +8,7 @@ Cross-cutting HTTP filters: headers, auth gates, logging, etc. Canonical example
 
 ## Flight nuances (easy to get wrong)
 
-1. **Class + methods, not only closures.** Prefer a class so Dice can inject `Engine`, `Config`, `Session`.
+1. **Class + methods, not only closures.** Prefer a class so Dice can inject `Engine`, `Config`, and other services.
 2. **Lifecycle:** implement `before(array $params): void` and/or `after(array $params): void` as needed. Route params from the matched route are in `$params`.
 3. **Constructor injection** works the same as controllers — type-hint dependencies; do not use `Flight::`.
 4. **Attach in routes**, not inside the middleware class:
@@ -18,7 +18,7 @@ Cross-cutting HTTP filters: headers, auth gates, logging, etc. Canonical example
 6. **Halt / redirect to stop the chain:** `$this->app->halt(403)`, `$this->app->redirect('/login')` — do not assume framework “return false” Laravel semantics unless you verify current Flight middleware docs.
 7. **Response headers:** `$this->app->response()->header('Name', 'value')`.
 8. **CSP nonce** is on the Engine: `$this->app->get('csp_nonce')` (set in bootstrap). Do not generate a second unrelated nonce for the same response unless you also update Twig globals.
-9. **Do not** read `$_SERVER` / `$_SESSION` directly for auth if Session is available — inject `flight\Session`.
+9. **Do not** read `$_SERVER` directly for request data — use `$this->app->request()`.
 10. **Tracy in dev** may need CSP `style-src` relaxation for the debug bar (see existing security headers middleware). Do not disable all CSP globally for that.
 
 ## Pattern

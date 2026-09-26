@@ -18,11 +18,6 @@ use App\Domain\Anomaly\Normalizer;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
-/**
- * Full analysis pipeline:
- *   entries → feature extraction → encoding (inside extraction)
- *           → normalization → DBSCAN → clusters/noise → atomic persistence.
- */
 final readonly class AnalyzeLogs
 {
     public function __construct(

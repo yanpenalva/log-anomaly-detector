@@ -24,8 +24,8 @@ class MigrateCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dbPath = sys_get_temp_dir() . '/flight_skeleton_migrate_' . uniqid('', true) . '.sqlite';
-        $this->migrationsDir = sys_get_temp_dir() . '/flight_skeleton_migrations_' . uniqid('', true);
+        $this->dbPath = sys_get_temp_dir() . '/log_anomaly_migrate_' . uniqid('', true) . '.sqlite';
+        $this->migrationsDir = sys_get_temp_dir() . '/log_anomaly_migrations_' . uniqid('', true);
         mkdir($this->migrationsDir, 0775, true);
 
         file_put_contents(

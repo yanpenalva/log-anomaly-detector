@@ -53,12 +53,6 @@
         "check": [
             "@test",
             "@analyse"
-        ],
-        "post-create-project-cmd": [
-            "@php -r \"if (!file_exists('app/config/config.php')) { copy('app/config/config_sample.php', 'app/config/config.php'); }\"",
-            "@php -r \"if (!file_exists('.env') && file_exists('.env.example')) { copy('.env.example', '.env'); }\"",
-            "@php -r \"if (!file_exists('.runway-config.json')) { file_put_contents('.runway-config.json', json_encode(['index_root' => 'public/index.php', 'app_root' => 'app/'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL); }\"",
-            "@php -r \"@mkdir('app/cache', 0775, true); @mkdir('app/cache/twig', 0775, true); @mkdir('app/log', 0775, true);\""
         ]
     },
     "type": "project"

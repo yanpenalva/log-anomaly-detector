@@ -4,7 +4,7 @@ Read root [AGENTS.md](../../AGENTS.md) first.
 
 ## Purpose
 
-PHPUnit tests that lock skeleton behavior.
+PHPUnit tests that lock project behavior.
 
 After application-code changes (see root [AGENTS.md](../AGENTS.md) **Testing & static analysis**):
 
