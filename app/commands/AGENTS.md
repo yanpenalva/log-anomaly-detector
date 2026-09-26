@@ -4,7 +4,7 @@ Read root [AGENTS.md](../../AGENTS.md) first. Security: [SECURITY.md](../../SECU
 
 ## Purpose
 
-CLI commands for this project, discovered by **Runway**. Example: `MigrateCommand` → `php runway migrate`.
+CLI commands for this project, discovered by **Runway**. Examples: `MigrateCommand` → `php runway migrate`, `AnalyzeCommand` → `php runway analyze` (batch dataset analysis; self-contained wiring + `AnalyzeCommand::loaderFor` / `resolveParameters` kept static for unit testing).
 
 ## Critical layout nuance
 

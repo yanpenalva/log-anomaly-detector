@@ -524,7 +524,7 @@ synthetic dataset ≠ production benchmark
 
 | Suite | Location | Contents |
 |---|---|---|
-| **Unit** | `tests/Unit/` | `FeatureExtractor`, encoder, `Normalizer`, DBSCAN wrapper, value objects, geometry — isolated, no DB |
+| **Unit** | `tests/Unit/` | `FeatureExtractor`, encoder, `Normalizer`, DBSCAN wrapper, value objects, geometry, CSV + nginx access.log parsers — isolated, no DB |
 | **Integration** | `tests/Integration/` | real SQLite + real migrations: repositories, atomic persistence, FK/cascade, full pipeline, HTTP controllers |
 
 Highlight: **`FeatureGeometryTest`** documents — and locks — the mathematical
@@ -563,6 +563,35 @@ Open `http://localhost:8000` — the dashboard. Paste logs, tune epsilon /
 minimum samples, run the analysis, inspect anomalies, browse persisted runs.
 
 Fresh database at any time: delete `database.sqlite`, run `php runway migrate`.
+
+### Batch analysis CLI
+
+Analyze a file from the command line — same pipeline, same persistence, no HTTP:
+
+```bash
+php runway analyze datasets/development.csv
+php runway analyze /var/log/nginx/access.log -m 3
+php runway analyze access.log --epsilon=0.35 --minimum-samples=5 --limit=20
+```
+
+Supported formats (chosen by extension):
+
+| Extension | Format |
+|---|---|
+| `.csv` | development dataset header (`method,endpoint,status_code,response_time,request_size,hour`) |
+| `.log` | nginx **combined** format, optionally followed by `$request_time` (seconds → ms); malformed lines are skipped |
+
+Options override `config.php`/`.env` defaults for this run only. The summary
+prints run id, samples, clusters, anomaly count and the first `--limit`
+anomaly rows. Results are persisted like any HTTP analysis.
+
+```text
+$ php runway analyze access.log -m 3
+Loaded 7 entries from access.log
+run 4 · dbscan · samples 7 · clusters 2 · anomalies 1
+anomalies (first 1 of 1):
+  GET     /.env                                    404 9ms 9B @ 03h
+```
 
 ## 21. Docker
 
@@ -665,7 +694,7 @@ means.**
 - [x] **V1** — boilerplate removal, SQLite, CSV dataset, domain model, feature extraction, encoding, normalization, DBSCAN, tests
 - [x] **V2** — analysis persistence, `/health`, `/analyze`, typed per-endpoint error handling
 - [x] **V2.5** — dashboard, atomic persistence with FK integrity, Docker
-- [ ] **V3** — Nginx `access.log` parser, batch analysis CLI
+- [x] **V3** — Nginx `access.log` parser, batch analysis CLI (`php runway analyze`)
 - [ ] **V4** — DBSCAN vs K-Means (and other PHP-ML techniques) compared with metrics that fit each family (density-based vs centroid-based)
 - [ ] **V5** — benchmarking, statistics, advanced visualization
 
