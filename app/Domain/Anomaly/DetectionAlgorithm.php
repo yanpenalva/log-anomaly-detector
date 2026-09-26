@@ -7,4 +7,5 @@ namespace App\Domain\Anomaly;
 enum DetectionAlgorithm: string
 {
     case Dbscan = 'dbscan';
+    case KMeans = 'kmeans';
 }

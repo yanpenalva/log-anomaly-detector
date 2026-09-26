@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Domain\Anomaly;
 
 /**
- * Outcome of one DBSCAN pass. DBSCAN produces no confidence: cluster id
- * per sample, null for noise — which this domain reports as an anomaly.
+ * Outcome of one clustering pass (DBSCAN or K-Means). No confidence is
+ * produced: cluster id per sample, null for an anomaly — noise for DBSCAN,
+ * a too-sparse cluster for K-Means.
  */
 final readonly class DetectionResult
 {
@@ -15,6 +16,14 @@ final readonly class DetectionResult
      */
     public function __construct(private array $clusterAssignments)
     {
+    }
+
+    /**
+     * @return list<int|null>
+     */
+    public function assignments(): array
+    {
+        return $this->clusterAssignments;
     }
 
     public function clusterOf(int $index): ?int

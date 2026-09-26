@@ -593,6 +593,45 @@ anomalies (first 1 of 1):
   GET     /.env                                    404 9ms 9B @ 03h
 ```
 
+### Detector comparison CLI (DBSCAN vs K-Means)
+
+Runs **both** detectors over the same extracted + normalized vectors — same
+features, same scaling, so the only variable is the algorithm:
+
+```bash
+php runway compare datasets/development.csv
+php runway compare access.log -e 0.35 -m 5 -k 4
+```
+
+```text
+$ php runway compare datasets/development.csv
+Loaded 1400 entries from datasets/development.csv
+comparison over 1400 shared normalized samples:
+dbscan  · clusters 6 · anomalies 25 (1.8%) · silhouette 0.778 · inertia 49.754 · 3377 ms
+kmeans  · clusters 4 · anomalies 0 (0.0%) · silhouette 0.836 · inertia 115.170 · 386 ms
+```
+
+Metrics are family-fit ([§10](#10-feature-geometry)):
+
+| Metric | Family | Meaning here |
+|---|---|---|
+| noise ratio | density (DBSCAN) | share of samples too sparse for any cluster — the anomalies |
+| inertia | centroid (K-Means) | within-cluster sum of squared distances to the centroid; what K-Means minimizes |
+| silhouette | shared | cohesion vs separation in [-1..1]; `n/a` below two clusters |
+| elapsed | shared | DBSCAN's O(n²) neighborhood search vs K-Means' Lloyd iterations |
+
+K-Means has **no noise concept** — every sample gets a centroid. The density
+bridge: a member of a cluster smaller than `minimum_samples` is reported as an
+anomaly, mirroring DBSCAN's "too sparse to be a profile". Because PHP-ML seeds
+centroids with an unseedable `random_int`, the detector runs 10 restarts and
+keeps the lowest-inertia pass (sklearn's `n_init` strategy).
+
+Read the sample output as the lesson: K-Means looks "better" (higher silhouette,
+faster) while DBSCAN is the honest one — those 25 noise points are exactly what
+K-Means silently absorbed into the nearest profile. Comparison is study-only
+(`CompareDetectors`); nothing is persisted and `/analyze` stays DBSCAN.
+
+
 ## 21. Docker
 
 Docker is an **optional, reproducible local environment** — not a deployment target.
@@ -695,7 +734,7 @@ means.**
 - [x] **V2** — analysis persistence, `/health`, `/analyze`, typed per-endpoint error handling
 - [x] **V2.5** — dashboard, atomic persistence with FK integrity, Docker
 - [x] **V3** — Nginx `access.log` parser, batch analysis CLI (`php runway analyze`)
-- [ ] **V4** — DBSCAN vs K-Means (and other PHP-ML techniques) compared with metrics that fit each family (density-based vs centroid-based)
+- [x] **V4** — DBSCAN vs K-Means compared with family-fit metrics (noise ratio, inertia, silhouette) via `php runway compare`
 - [ ] **V5** — benchmarking, statistics, advanced visualization
 
 No deployment/infrastructure roadmap — this is a study project.
