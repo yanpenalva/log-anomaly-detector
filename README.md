@@ -671,6 +671,45 @@ Items come from `LogTransactionBuilder` discretization:
 `time=<fast|medium|slow>` (100 ms / 1000 ms cuts) and
 `size=<small|medium|large>` (500 B / 5 kB cuts).
 
+### Technique comparison and benchmarks
+
+All four PHP-ML techniques in the app, measured on the generated dataset
+(`scripts/generate_dataset.php`) at two sizes, same machine, PHP 8.4 CLI
+(measured 2026-09; timings include the shared extract + normalize pipeline):
+
+| Technique | Family | Role | 1,400 rows | 5,600 rows | Scaling |
+|---|---|---|---|---|---|
+| DBSCAN (ε=0.35, m=5) | density | detector | 3.5 s | 58.6 s | **O(n²)** — ×16.7 for ×4 data |
+| K-Means (k=4, 10 restarts) | centroid | detector | 0.41 s | 2.60 s | ~O(n) — ×6.3 for ×4 data |
+| PCA (→ 2D) | reduction | analysis | ~0.5 s | ~1.7 s | O(n·m²), m ≪ n |
+| Apriori (s≥0.3) | association | analysis | ~0.1 s | ~1.0 s | driven by itemsets, not n |
+
+Detection quality on the same runs:
+
+| Metric | DBSCAN @1,400 | K-Means @1,400 | DBSCAN @5,600 | K-Means @5,600 |
+|---|---|---|---|---|
+| clusters | 6 | 4 | 14 | 4 |
+| anomalies | 25 (1.8%) | 0 | 21 (0.4%) | 0 |
+| silhouette | 0.778 | 0.836 | 0.783 | 0.831 |
+| inertia | 49.8 | 115.2 | 208.3 | 515.3 |
+
+How to read it:
+
+- **Scaling is the headline.** ×4 data made DBSCAN ×16.7 slower (quadratic
+  neighborhood search) while K-Means grew ×6.3 (Lloyd iterations, linear in
+  n even with 10 restarts).
+- **Same ε, denser data → less noise** (1.8% → 0.4%): density thresholds are
+  relative to the data. At 5,600 rows most former outliers found enough
+  neighbors inside ε.
+- K-Means' higher silhouette at both sizes is the same lesson as
+  [§Detector comparison](#detector-comparison-cli-dbscan-vs-k-means): it
+  never reports noise, so its "quality" hides the anomalies DBSCAN surfaces.
+- `php runway compare` wall time at 5,600 rows is ~148 s, of which only ~61 s
+  is detection — silhouette is O(n²) per detector and dominates at scale.
+- The 5,600-row signature run surfaced a true anomaly signature:
+  `size=large + method=POST => time=slow` (support 0.67, normal rate 0.003) —
+  the payload-flood profile is almost absent from normal traffic.
+
 ## 21. Docker
 
 Docker is an **optional, reproducible local environment** — not a deployment target.
