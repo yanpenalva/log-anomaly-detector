@@ -6,12 +6,6 @@ namespace App\Domain\Anomaly;
 
 use InvalidArgumentException;
 
-/**
- * Clustering-quality metrics computed on the normalized feature space.
- * Family-fit: noise ratio speaks for DBSCAN (density-based), inertia for
- * K-Means (centroid-based); silhouette is the shared internal metric,
- * undefined (null) when fewer than two non-noise clusters exist.
- */
 final readonly class ClusteringMetrics
 {
     /**
@@ -37,9 +31,6 @@ final readonly class ClusteringMetrics
     }
 
     /**
-     * Within-cluster sum of squared Euclidean distances to the cluster
-     * centroid, noise excluded; 0.0 when nothing is clustered.
-     *
      * @param list<FeatureVector> $vectors
      */
     public static function inertia(array $vectors, DetectionResult $result): float
@@ -69,8 +60,6 @@ final readonly class ClusteringMetrics
     }
 
     /**
-     * Non-noise cluster id => member count.
-     *
      * @return array<int, int>
      */
     public static function clusterSizes(DetectionResult $result): array

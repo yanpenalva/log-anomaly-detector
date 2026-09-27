@@ -6,9 +6,6 @@ namespace App\Application\Anomaly;
 
 use App\Domain\Anomaly\DetectionAlgorithm;
 
-/**
- * Metrics for one detector over the shared normalized feature space.
- */
 final readonly class DetectorReport
 {
     public function __construct(

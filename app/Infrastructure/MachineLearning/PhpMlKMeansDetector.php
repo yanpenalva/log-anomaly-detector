@@ -12,17 +12,6 @@ use App\Domain\Anomaly\KMeansParameters;
 use Phpml\Clustering\KMeans;
 use RuntimeException;
 
-/**
- * PHP-ML K-Means behind the domain port. K-Means assigns every sample to a
- * centroid — there is no noise — so the density bridge to this domain is:
- * a member of a cluster smaller than minimumSamples is an anomaly (null
- * cluster), mirroring DBSCAN's "too sparse to be a profile" intuition.
- *
- * PHP-ML seeds centroids with k-means++ using unseedable random_int, so a
- * single run can land in a local optimum. The detector therefore runs
- * RESTARTS passes and keeps the lowest-inertia one (sklearn's n_init
- * strategy); sample indices are preserved via point labels.
- */
 final readonly class PhpMlKMeansDetector implements AnomalyDetector
 {
     private const RESTARTS = 10;

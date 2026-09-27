@@ -17,11 +17,6 @@ use App\Domain\Anomaly\KMeansParameters;
 use App\Domain\Anomaly\Normalizer;
 use InvalidArgumentException;
 
-/**
- * Runs DBSCAN and K-Means over the same extracted + normalized vectors and
- * reports family-fit metrics. Study-only: nothing is persisted and the
- * product anomaly semantics (DBSCAN noise) stay untouched.
- */
 final readonly class CompareDetectors
 {
     public function __construct(

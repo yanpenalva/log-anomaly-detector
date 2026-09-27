@@ -22,10 +22,6 @@ use RuntimeException;
 use Throwable;
 
 /**
- * DBSCAN vs K-Means comparison CLI:
- *   php runway compare <file> [--epsilon=0.35] [--minimum-samples=5] [--clusters=4]
- * Supported datasets: .csv (development dataset) and .log (nginx combined).
- *
  * @property mixed $file
  * @property mixed $epsilon
  * @property mixed $minimumSamples

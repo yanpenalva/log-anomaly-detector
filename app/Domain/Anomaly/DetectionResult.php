@@ -4,11 +4,6 @@ declare(strict_types=1);
 
 namespace App\Domain\Anomaly;
 
-/**
- * Outcome of one clustering pass (DBSCAN or K-Means). No confidence is
- * produced: cluster id per sample, null for an anomaly — noise for DBSCAN,
- * a too-sparse cluster for K-Means.
- */
 final readonly class DetectionResult
 {
     /**

@@ -31,8 +31,6 @@ class ClusteringMetricsTest extends TestCase
 
     public function testSilhouetteAveragesOverAllSamplesIncludingNoise(): void
     {
-        // two far blobs + one noise point: clustered samples score ~1, noise
-        // contributes 0, and the mean divides by all 4 samples -> ~0.5
         $result = new DetectionResult([0, 0, 1, null]);
         $vectors = self::vectors([[0.0], [0.1], [10.0], [50.0]]);
 
@@ -45,7 +43,6 @@ class ClusteringMetricsTest extends TestCase
 
     public function testInertiaKnownValue(): void
     {
-        // cluster 0 = [0.0, 2.0] around centroid 1.0 -> (1 + 1); cluster 1 = [10.0] centroid itself -> 0
         $result = new DetectionResult([0, 0, 1]);
 
         $inertia = ClusteringMetrics::inertia(self::vectors([[0.0], [2.0], [10.0]]), $result);

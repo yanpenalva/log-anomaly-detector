@@ -6,11 +6,6 @@ namespace App\Domain\Anomaly;
 
 use InvalidArgumentException;
 
-/**
- * K-Means hyper-parameters: clusters (k, the fixed centroid count) and
- * minimumSamples, the density bridge to DBSCAN — clusters smaller than this
- * are reported as anomalies because no DBSCAN-style "noise" exists here.
- */
 final readonly class KMeansParameters
 {
     public const MIN_CLUSTERS = 1;

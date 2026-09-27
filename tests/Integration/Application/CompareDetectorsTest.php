@@ -68,9 +68,6 @@ class CompareDetectorsTest extends TestCase
     }
 
     /**
-     * Two dense blobs (different endpoint+verb+timing) and three far-away
-     * scanner probes — same geometry as AnalyzeLogsTest.
-     *
      * @return list<HttpLogEntry>
      */
     private function entries(): array
