@@ -631,6 +631,45 @@ faster) while DBSCAN is the honest one — those 25 noise points are exactly wha
 K-Means silently absorbed into the nearest profile. Comparison is study-only
 (`CompareDetectors`); nothing is persisted and `/analyze` stays DBSCAN.
 
+### Projection CLI (PCA)
+
+Projects the DBSCAN analysis into 2D with PCA — same pipeline, same features,
+so the scatter plot shows exactly what the detector saw:
+
+```bash
+php runway project datasets/development.csv -o projection.csv
+php runway project access.log -d 2 -e 0.35 -m 5
+```
+
+Without `-o` the first 20 rows print to stdout. CSV columns:
+`index,pc1,pc2,cluster,anomaly` — `cluster` is the DBSCAN cluster id or
+`noise`, `anomaly` is 0/1. Feed it to any plotting tool; the noise points
+should sit far from every cluster blob. PCA is deterministic; the eigen
+vector sign is arbitrary, so axis direction may flip between datasets.
+
+### Signature CLI (Apriori)
+
+Mines association rules **among the detected anomalies** and contrasts each
+rule's full itemset against normal traffic — a rule with high anomaly support
+and ~0 normal rate is an anomaly signature, while one that is also common in
+normal traffic is just the app's baseline:
+
+```bash
+php runway characterize datasets/development.csv
+php runway characterize access.log -s 0.4 -c 0.6 -l 5
+```
+
+```text
+$ php runway characterize datasets/development.csv
+25 anomalies of 1400 samples; signature rules (support 0.30, confidence 0.50):
+method=GET => size=small    support 0.56 confidence 1.00 normal 0.169
+...
+```
+
+Items come from `LogTransactionBuilder` discretization:
+`method=<verb>`, `endpoint=<path>`, `status=<code>`, `hour=<HH>`,
+`time=<fast|medium|slow>` (100 ms / 1000 ms cuts) and
+`size=<small|medium|large>` (500 B / 5 kB cuts).
 
 ## 21. Docker
 
@@ -735,6 +774,7 @@ means.**
 - [x] **V2.5** — dashboard, atomic persistence with FK integrity, Docker
 - [x] **V3** — Nginx `access.log` parser, batch analysis CLI (`php runway analyze`)
 - [x] **V4** — DBSCAN vs K-Means compared with family-fit metrics (noise ratio, inertia, silhouette) via `php runway compare`
+- [x] **V4.5** — PCA projection (`php runway project`) and Apriori anomaly signatures (`php runway characterize`)
 - [ ] **V5** — benchmarking, statistics, advanced visualization
 
 No deployment/infrastructure roadmap — this is a study project.
