@@ -28,6 +28,13 @@ final readonly class PhpMlPcaTransformer implements DimensionalityReduction
                 $dimension - 1
             ));
         }
+        if (count($vectors) <= $dimension) {
+            throw new RuntimeException(sprintf(
+                'PCA needs more samples (%d given) than feature dimensions (%d); paste more logs',
+                count($vectors),
+                $dimension
+            ));
+        }
 
         $samples = array_map(static fn (FeatureVector $vector) => $vector->values(), $vectors);
         $pca = new PCA(null, $this->dimensions);

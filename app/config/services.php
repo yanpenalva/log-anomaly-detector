@@ -17,13 +17,16 @@ declare(strict_types=1);
  */
 
 use App\Application\Anomaly\AnalyzeLogs;
+use App\Application\Anomaly\BuildVisualization;
 use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\AnalysisRunRepository;
 use App\Domain\Anomaly\FeatureExtractor;
+use App\Domain\Anomaly\KDistanceAnalyzer;
 use App\Domain\Anomaly\LogEntryRepository;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
+use App\Infrastructure\MachineLearning\PhpMlPcaTransformer;
 use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
@@ -104,6 +107,13 @@ if ($db instanceof SimplePdo) {
         new MinMaxNormalizer(),
         new PhpMlDetectorFactory(),
         $anomalySubstitutions[AnalysisResultRepository::class]
+    );
+    $anomalySubstitutions[BuildVisualization::class] = new BuildVisualization(
+        new FeatureExtractor($encoder),
+        new MinMaxNormalizer(),
+        new PhpMlDetectorFactory(),
+        new PhpMlPcaTransformer(2),
+        new KDistanceAnalyzer()
     );
 }
 

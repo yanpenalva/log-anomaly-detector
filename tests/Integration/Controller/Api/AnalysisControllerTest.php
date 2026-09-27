@@ -5,19 +5,23 @@ declare(strict_types=1);
 namespace Tests\Integration\Controller\Api;
 
 use App\Application\Anomaly\AnalyzeLogs;
+use App\Application\Anomaly\BuildVisualization;
 use App\Controller\Api\AnalysisController;
 use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\FeatureExtractor;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\HttpMethod;
+use App\Domain\Anomaly\KDistanceAnalyzer;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
+use App\Infrastructure\MachineLearning\PhpMlPcaTransformer;
 use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
 use App\Infrastructure\Persistence\SqliteLogEntryRepository;
 use App\Utils\Config;
+use flight\database\SimplePdo;
 use flight\Engine;
 use flight\net\Request;
 use flight\util\Collection;
@@ -38,12 +42,15 @@ class AnalysisControllerTest extends TestCase
 
     private SqliteAnalysisRunRepository $runs;
 
+    private SimplePdo $pdo;
+
     private string $dbPath;
 
     protected function setUp(): void
     {
         $database = TestDatabase::create();
         $this->dbPath = $database->path;
+        $this->pdo = $database->pdo;
         $this->jsonCalls = [];
 
         $this->app = $this->getMockBuilder(Engine::class)
@@ -62,6 +69,13 @@ class AnalysisControllerTest extends TestCase
                 new MinMaxNormalizer(),
                 new PhpMlDetectorFactory(),
                 $this->results
+            ),
+            new BuildVisualization(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new PhpMlDetectorFactory(),
+                new PhpMlPcaTransformer(2),
+                new KDistanceAnalyzer()
             ),
             $this->runs,
             new SqliteLogEntryRepository($database->pdo)
@@ -241,6 +255,88 @@ class AnalysisControllerTest extends TestCase
         [$payload, $status] = $this->jsonCalls[0];
         self::assertSame(422, $status);
         self::assertSame('invalid_log', $payload['error']['code']);
+    }
+
+    public function testProjectReturnsPointsAndEpsilonHint(): void
+    {
+        $logs = [];
+        for ($i = 0; $i < 20; $i++) {
+            $logs[] = $this->log($i);
+        }
+        for ($i = 0; $i < 15; $i++) {
+            $logs[] = [
+                'method' => 'POST', 'endpoint' => '/payments', 'status_code' => 201,
+                'response_time' => 340 + $i, 'request_size' => 1500 + $i, 'hour' => 12,
+            ];
+        }
+        for ($i = 0; $i < 4; $i++) {
+            $logs[] = [
+                'method' => 'GET', 'endpoint' => '/.env', 'status_code' => 404,
+                'response_time' => 9 + $i, 'request_size' => 60 + $i, 'hour' => 3,
+            ];
+        }
+        $this->givenBody((string) json_encode(['logs' => $logs]));
+
+        $this->controller->project();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(200, $status);
+        self::assertSame(39, $payload['data']['sample_count']);
+        self::assertCount(39, $payload['data']['points']);
+        self::assertCount(2, $payload['data']['points'][0]['coordinates']);
+        self::assertNotNull($payload['data']['suggested_epsilon']);
+        self::assertSame(4, $payload['data']['anomalies']);
+        self::assertSame(2, $payload['data']['clusters']);
+    }
+
+    public function testProjectRejectsMoreThanCap(): void
+    {
+        $controller = $this->controllerWithBigPayloadLimit();
+        $logs = [];
+        for ($i = 0; $i < 2001; $i++) {
+            $logs[] = $this->log($i % 50);
+        }
+        $this->givenBody((string) json_encode(['logs' => $logs]));
+
+        $controller->project();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(422, $status);
+        self::assertSame('too_many_logs', $payload['error']['code']);
+        self::assertStringContainsString('2000', $payload['error']['message']);
+    }
+
+    private function controllerWithBigPayloadLimit(): AnalysisController
+    {
+        $config = new Config([
+            'anomaly' => [
+                'epsilon' => 0.5,
+                'minimum_samples' => 5,
+                'max_payload_bytes' => 1048576,
+                'max_logs_per_request' => 5000,
+                'max_anomalies_in_response' => 100,
+            ],
+        ]);
+
+        return new AnalysisController(
+            $this->app,
+            $config,
+            new AnalyzeLogs(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new PhpMlDetectorFactory(),
+                $this->results
+            ),
+            new BuildVisualization(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new PhpMlDetectorFactory(),
+                new PhpMlPcaTransformer(2),
+                new KDistanceAnalyzer()
+            ),
+            $this->runs,
+            new SqliteLogEntryRepository($this->pdo)
+        );
     }
 
     public function testDetectReturnsHonest501(): void

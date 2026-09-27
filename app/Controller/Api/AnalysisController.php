@@ -5,23 +5,28 @@ declare(strict_types=1);
 namespace App\Controller\Api;
 
 use App\Application\Anomaly\AnalyzeLogs;
+use App\Application\Anomaly\BuildVisualization;
+use App\Application\Anomaly\ProjectedSample;
 use App\Domain\Anomaly\AnalysisRun;
 use App\Domain\Anomaly\AnalysisRunRepository;
 use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\DbscanParameters;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\InvalidHttpLogEntry;
+use App\Domain\Anomaly\KDistanceAnalyzer;
 use App\Domain\Anomaly\LogEntryRepository;
 use App\Utils\Config;
 use flight\Engine;
 use InvalidArgumentException;
 use JsonException;
+use RuntimeException;
 
 final readonly class AnalysisController
 {
     private const MAX_JSON_DEPTH = 16;
     private const DEFAULT_MAX_PAYLOAD_BYTES = 2097152;
     private const DEFAULT_MAX_LOGS_PER_REQUEST = 10000;
+    private const MAX_PROJECTION_LOGS = 2000;
     private const DEFAULT_MAX_ANOMALIES_IN_RESPONSE = 100;
     private const DEFAULT_ANALYSES_LIMIT = 50;
     private const MIN_ANALYSES_LIMIT = 1;
@@ -45,6 +50,7 @@ final readonly class AnalysisController
         private readonly Engine $app,
         private readonly Config $config,
         private readonly AnalyzeLogs $analyzeLogs,
+        private readonly BuildVisualization $visualization,
         private readonly AnalysisRunRepository $runs,
         private readonly LogEntryRepository $logEntries,
     ) {
@@ -70,6 +76,55 @@ final readonly class AnalysisController
                 'anomalies' => $result->anomalyCount,
             ],
         ]);
+    }
+
+    public function project(): void
+    {
+        $payload = $this->validatedPayload(self::MAX_PROJECTION_LOGS);
+        if ($payload === null) {
+            return;
+        }
+
+        try {
+            $data = $this->visualization->execute($payload['parameters'], $payload['entries']);
+        } catch (RuntimeException $e) {
+            $this->error(self::ERROR_INVALID_REQUEST, $e->getMessage(), 422);
+            return;
+        }
+        $distances = $data->kDistance->sortedDistances;
+
+        $this->app->json(['data' => [
+            'sample_count' => $data->projection->sampleCount,
+            'clusters' => self::countClusters($data->projection->samples),
+            'anomalies' => count(array_filter($data->projection->samples, static fn (ProjectedSample $s): bool => $s->isAnomaly)),
+            'suggested_epsilon' => $data->kDistance->suggestedEpsilon,
+            'epsilon_curve' => [
+                'max' => KDistanceAnalyzer::quantile($distances, 0.0),
+                'p99' => KDistanceAnalyzer::quantile($distances, 0.01),
+                'p90' => KDistanceAnalyzer::quantile($distances, 0.1),
+                'median' => KDistanceAnalyzer::quantile($distances, 0.5),
+                'min' => KDistanceAnalyzer::quantile($distances, 1.0),
+            ],
+            'points' => array_map(
+                static fn (ProjectedSample $sample): array => [
+                    'coordinates' => $sample->coordinates,
+                    'cluster' => $sample->cluster,
+                    'anomaly' => $sample->isAnomaly,
+                ],
+                $data->projection->samples
+            ),
+        ]]);
+    }
+
+    /**
+     * @param list<ProjectedSample> $samples
+     */
+    private static function countClusters(array $samples): int
+    {
+        return count(array_unique(array_filter(
+            array_map(static fn (ProjectedSample $s): ?int => $s->cluster, $samples),
+            static fn (?int $cluster): bool => $cluster !== null
+        )));
     }
 
     /**
@@ -129,10 +184,10 @@ final readonly class AnalysisController
     /**
      * @return array{entries: list<HttpLogEntry>, parameters: DbscanParameters}|null
      */
-    private function validatedPayload(): ?array
+    private function validatedPayload(?int $maxLogs = null): ?array
     {
         $raw = $this->decodedBody();
-        $entries = $raw === null ? null : $this->validatedEntries($raw);
+        $entries = $raw === null ? null : $this->validatedEntries($raw, $maxLogs);
         $parameters = $raw === null ? null : $this->validatedParameters($raw);
 
         return match (true) {
@@ -189,7 +244,7 @@ final readonly class AnalysisController
      *
      * @return list<HttpLogEntry>|null
      */
-    private function validatedEntries(array $raw): ?array
+    private function validatedEntries(array $raw, ?int $maxLogs = null): ?array
     {
         $logs = $raw[self::LOGS_FIELD] ?? null;
         if (!is_array($logs) || $logs === [] || !array_is_list($logs)) {
@@ -201,11 +256,11 @@ final readonly class AnalysisController
             return null;
         }
 
-        $maxLogs = $this->intConfig('anomaly.max_logs_per_request', self::DEFAULT_MAX_LOGS_PER_REQUEST);
-        if (count($logs) > $maxLogs) {
+        $limit = $maxLogs ?? $this->intConfig('anomaly.max_logs_per_request', self::DEFAULT_MAX_LOGS_PER_REQUEST);
+        if (count($logs) > $limit) {
             $this->error(
                 self::ERROR_TOO_MANY_LOGS,
-                sprintf('Field "%s" accepts at most %d entries per request', self::LOGS_FIELD, $maxLogs),
+                sprintf('Field "%s" accepts at most %d entries per request', self::LOGS_FIELD, $limit),
                 422
             );
             return null;

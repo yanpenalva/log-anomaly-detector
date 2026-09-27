@@ -710,6 +710,45 @@ How to read it:
   `size=large + method=POST => time=slow` (support 0.67, normal rate 0.003) —
   the payload-flood profile is almost absent from normal traffic.
 
+### Epsilon suggestion (k-distance knee)
+
+`php runway knee <file>` computes the k-distance curve (distance to the
+(k = minimum_samples − 1)-th nearest neighbor for every sample, on the same
+normalized features the detector sees) and suggests epsilon at the steepest
+log-space drop — where the outlier band ends and dense traffic begins:
+
+```bash
+php runway knee datasets/development.csv
+php runway knee access.log -m 3
+```
+
+```text
+$ php runway knee datasets/development.csv
+Loaded 1400 entries from datasets/development.csv
+k-distance curve over 1400 samples (k = minimum_samples - 1):
+suggested epsilon (steepest log drop): 0.0075
+  max 1.7325 · p99 1.4142 · p90 0.0020 · median 0.0006 · min 0.0001
+```
+
+This is a **heuristic starting point, not truth**: the suggestion sits at the
+beginning of the dense plateau, and chaining lets DBSCAN form clusters well
+above it (the dataset works comfortably at ε = 0.35). Sweep around it — and
+watch the noise share. Same endpoint logic powers `POST /api/v1/project`,
+which returns the suggestion together with the PCA scatter.
+
+### Dashboard visualization (V5)
+
+The dashboard gained three blocks:
+
+- **PCA scatter** — "Project & scatter" runs the detection + PCA pipeline on
+  the pasted logs (inline only, capped at 2,000 entries because the k-distance
+  pass is O(n²)) and renders an inline SVG: red = noise = anomaly, colors =
+  DBSCAN clusters, with the knee epsilon suggestion one click away from the
+  form.
+- **Algorithms used** — what DBSCAN, K-Means, PCA, Apriori and the k-distance
+  statistic each do in this project, and through which family they see data.
+- **Technique performance** — the measured benchmark table above, in-app.
+
 ## 21. Docker
 
 Docker is an **optional, reproducible local environment** — not a deployment target.
@@ -814,7 +853,7 @@ means.**
 - [x] **V3** — Nginx `access.log` parser, batch analysis CLI (`php runway analyze`)
 - [x] **V4** — DBSCAN vs K-Means compared with family-fit metrics (noise ratio, inertia, silhouette) via `php runway compare`
 - [x] **V4.5** — PCA projection (`php runway project`) and Apriori anomaly signatures (`php runway characterize`)
-- [ ] **V5** — benchmarking, statistics, advanced visualization
+- [x] **V5** — benchmarking (§benchmarks), k-distance knee statistics (`php runway knee`), dashboard PCA scatter + in-app algorithm/performance reference
 
 No deployment/infrastructure roadmap — this is a study project.
 

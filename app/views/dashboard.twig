@@ -63,6 +63,7 @@
                 <input type="number" id="minSamples" value="5" step="1" min="1" max="10000">
             </div>
             <button id="analyze">Analyze</button>
+            <button id="project">Project &amp; scatter</button>
             <button class="ghost" id="loadSample">Load sample logs</button>
         </div>
     </div>
@@ -125,6 +126,74 @@
 
     <h2 style="margin-top: 1.4rem;">Anomalies</h2>
     <div id="anomalyTable"></div>
+</div>
+
+<div class="card hidden" id="vizCard">
+    <h2>
+        PCA projection
+        <span class="badge run" id="vizBadge">2D</span>
+    </h2>
+    <p class="muted" style="margin-top: 0;">
+        Same pipeline, same features, projected to 2D with PCA. Each dot is one log —
+        <span class="badge noise">red = noise = anomaly</span>, colors are DBSCAN clusters.
+    </p>
+    <div id="vizMeta" class="muted" style="margin-bottom: .6rem;"></div>
+    <div id="scatter" style="border: 1px solid var(--border); border-radius: 10px; background: #0b1018; padding: .6rem;"></div>
+</div>
+
+<div class="grid cols-2">
+    <div class="card">
+        <h2>Algorithms used</h2>
+        <p class="muted" style="margin-top: 0;">All techniques run through PHP-ML, wrapped behind domain ports — the domain never imports <code>Phpml\</code>.</p>
+        <table>
+            <thead><tr><th>Technique</th><th>Family</th><th>What it does here</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><strong>DBSCAN</strong></td>
+                    <td>density</td>
+                    <td>Clusters logs by neighborhood density; noise points <em>are</em> the anomalies. The production detector.</td>
+                </tr>
+                <tr>
+                    <td><strong>K-Means</strong></td>
+                    <td>centroid</td>
+                    <td>Study-only contrast: assigns every log to one of k centroids (no noise concept — small clusters stand in for anomalies).</td>
+                </tr>
+                <tr>
+                    <td><strong>PCA</strong></td>
+                    <td>reduction</td>
+                    <td>Projects the ~33-dim feature space to 2D for the scatter plot, preserving maximum variance.</td>
+                </tr>
+                <tr>
+                    <td><strong>Apriori</strong></td>
+                    <td>association</td>
+                    <td>Mines rule signatures among anomalies (CLI <code>php runway characterize</code>) and contrasts them with normal traffic.</td>
+                </tr>
+                <tr>
+                    <td><strong>k-distance</strong></td>
+                    <td>statistics</td>
+                    <td>Suggests epsilon from the knee of the k-th neighbor distance curve (this page and <code>php runway knee</code>).</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Technique performance</h2>
+        <p class="muted" style="margin-top: 0;">Measured on the generated dataset (PHP 8.4, same machine). Full methodology in the README.</p>
+        <table>
+            <thead><tr><th>Technique</th><th>1,400 rows</th><th>5,600 rows</th><th>Scaling</th></tr></thead>
+            <tbody>
+                <tr><td>DBSCAN</td><td>3.5 s</td><td>58.6 s</td><td>O(n²)</td></tr>
+                <tr><td>K-Means (10 restarts)</td><td>0.41 s</td><td>2.60 s</td><td>~O(n)</td></tr>
+                <tr><td>PCA → 2D</td><td>~0.5 s</td><td>~1.7 s</td><td>O(n·m²)</td></tr>
+                <tr><td>Apriori</td><td>~0.1 s</td><td>~1.0 s</td><td>itemsets</td></tr>
+            </tbody>
+        </table>
+        <p class="muted" style="font-size: .85rem; margin-bottom: 0;">
+            ×4 data → DBSCAN ×16.7 slower, K-Means ×6.3. Quality is a different story:
+            K-Means looks better on silhouette only because it never reports noise.
+        </p>
+    </div>
 </div>
 
 <div class="card">
@@ -279,6 +348,80 @@ $("analyze").addEventListener("click", async () => {
         renderRun(body.data);
         loadHistory();
         fetchAnomalies(body.data.run_id);
+    } catch (e) {
+        alertBox("Request failed: " + e.message);
+    } finally {
+        button.disabled = false;
+    }
+});
+
+function clusterColor(cluster) {
+    return `hsl(${(cluster * 67) % 360} 65% 60%)`;
+}
+
+function renderScatter(points) {
+    const xs = points.map((p) => p.coordinates[0]);
+    const ys = points.map((p) => p.coordinates[1]);
+    const pad = (max, min) => Math.max((max - min) * 0.05, 1e-9);
+    const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
+    const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+    const toX = (v) => 4 + ((v - minX) / (maxX - minX + pad(maxX, minX))) * 92;
+    const toY = (v) => 96 - ((v - minY) / (maxY - minY + pad(maxY, minY))) * 92;
+
+    const dots = points.map((p) => {
+        const fill = p.anomaly ? "var(--bad)" : clusterColor(p.cluster ?? 0);
+        const r = p.anomaly ? 1.4 : 1.0;
+        return `<circle cx="${toX(p.coordinates[0]).toFixed(2)}" cy="${toY(p.coordinates[1]).toFixed(2)}" r="${r}" fill="${fill}" fill-opacity="0.85"/>`;
+    }).join("");
+
+    $("scatter").innerHTML = `
+        <svg viewBox="0 0 100 100" style="width: 100%; height: auto; display: block;">
+            <line x1="4" y1="96" x2="96" y2="96" stroke="var(--border)" stroke-width="0.4"/>
+            <line x1="4" y1="96" x2="4" y2="4" stroke="var(--border)" stroke-width="0.4"/>
+            <text x="96" y="99" font-size="3" fill="var(--muted)" text-anchor="end">pc1</text>
+            <text x="1" y="7" font-size="3" fill="var(--muted)">pc2</text>
+            ${dots}
+        </svg>`;
+}
+
+$("project").addEventListener("click", async () => {
+    const button = $("project");
+    button.disabled = true;
+    try {
+        let payload;
+        try {
+            payload = JSON.parse($("logs").value);
+        } catch (e) {
+            alertBox("Invalid JSON: " + e.message);
+            return;
+        }
+        payload.epsilon = parseFloat($("epsilon").value);
+        payload.minimum_samples = parseInt($("minSamples").value, 10);
+
+        const response = await fetch("{{ base_url }}api/v1/project", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+        });
+        const body = await response.json();
+        if (!response.ok) {
+            alertBox(body.error ? `${body.error.code}: ${body.error.message}` : "Projection failed");
+            return;
+        }
+        $("alert").style.display = "none";
+        $("vizCard").classList.remove("hidden");
+        $("vizBadge").textContent = `${body.data.sample_count} samples`;
+        const hint = body.data.suggested_epsilon;
+        const curve = body.data.epsilon_curve || {};
+        $("vizMeta").innerHTML = `clusters ${body.data.clusters} · anomalies ${body.data.anomalies}` +
+            (hint ? ` · knee suggests epsilon ≈ <strong>${hint.toFixed(3)}</strong>
+             <span class="muted">(max ${Number(curve.max ?? 0).toFixed(2)}, median ${Number(curve.median ?? 0).toFixed(3)})</span>
+             <button class="ghost" id="applyEpsilon">apply to form</button>` : "");
+        renderScatter(body.data.points);
+        const apply = $("applyEpsilon");
+        if (apply) {
+            apply.addEventListener("click", () => { $("epsilon").value = hint.toFixed(3); });
+        }
     } catch (e) {
         alertBox("Request failed: " + e.message);
     } finally {
