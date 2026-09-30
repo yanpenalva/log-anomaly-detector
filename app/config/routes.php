@@ -11,6 +11,7 @@
 use App\Controller\Api\AnalysisController;
 use App\Controller\Api\HealthController;
 use App\Controller\HomeController;
+use App\Middleware\CsrfMiddleware;
 use App\Middleware\SecurityHeadersMiddleware;
 use App\Utils\DatabaseFactory;
 use flight\net\Router;
@@ -25,9 +26,11 @@ $router->group('', function (Router $router) use ($config) {
         if (DatabaseFactory::isEnabled($config)) {
             $router->post('/analyze', [AnalysisController::class, 'analyze']);
             $router->post('/project', [AnalysisController::class, 'project']);
+            $router->post('/compare', [AnalysisController::class, 'compare']);
             $router->post('/detect', [AnalysisController::class, 'detect']);
             $router->get('/analysis', [AnalysisController::class, 'index']);
             $router->get('/analysis/@id:[0-9]+', [AnalysisController::class, 'show']);
+            $router->get('/analysis/@id:[0-9]+/export', [AnalysisController::class, 'export']);
         }
     });
-}, [SecurityHeadersMiddleware::class]);
+}, [SecurityHeadersMiddleware::class, CsrfMiddleware::class]);

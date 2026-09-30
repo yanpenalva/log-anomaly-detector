@@ -139,6 +139,8 @@
     </p>
     <div id="vizMeta" class="muted" style="margin-bottom: .6rem;"></div>
     <div id="scatter" style="border: 1px solid var(--border); border-radius: 10px; background: #0b1018; padding: .6rem;"></div>
+    <h2 style="margin-top: 1.2rem; font-size: 1rem;">k-distance curve <span class="muted" style="font-weight: 400;">(log scale — pick ε above the cliff, below the outliers)</span></h2>
+    <div id="curveChart" style="border: 1px solid var(--border); border-radius: 10px; background: #0b1018; padding: .6rem;"></div>
 </div>
 
 <div class="grid cols-2">
@@ -172,6 +174,16 @@
                     <td><strong>k-distance</strong></td>
                     <td>statistics</td>
                     <td>Suggests epsilon from the knee of the k-th neighbor distance curve (this page and <code>php runway knee</code>).</td>
+                </tr>
+                <tr>
+                    <td><strong>LOF</strong></td>
+                    <td>local density</td>
+                    <td>Study-only contrast: flags points sparser than their own neighborhood (<code>php runway compare</code>).</td>
+                </tr>
+                <tr>
+                    <td><strong>Isolation Forest</strong></td>
+                    <td>isolation</td>
+                    <td>Study-only contrast: random split trees; anomalies isolate in fewer steps.</td>
                 </tr>
             </tbody>
         </table>
@@ -336,7 +348,7 @@ $("analyze").addEventListener("click", async () => {
 
         const response = await fetch("{{ base_url }}api/v1/analyze", {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
+            headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
             body: JSON.stringify(payload)
         });
         const body = await response.json();
@@ -384,6 +396,36 @@ function renderScatter(points) {
         </svg>`;
 }
 
+function csrfToken() {
+    const match = document.cookie.match(/csrf_token=([^;]+)/);
+    return match ? match[1] : "";
+}
+
+function renderCurve(curve, suggested) {
+    if (!curve || curve.length < 2) { $("curveChart").innerHTML = ""; return; }
+    const W = 100, H = 60, PAD = 6;
+    const maxIdx = curve[curve.length - 1].index;
+    const logs = curve.map((p) => Math.log10(Math.max(p.distance, 1e-12)));
+    const lo = Math.min(...logs), hi = Math.max(...logs);
+    const toX = (i) => PAD + (i / maxIdx) * (W - PAD - 2);
+    const toY = (v) => PAD + ((hi - v) / (hi - lo || 1)) * (H - PAD * 2);
+    const path = curve.map((p, k) => `${k ? "L" : "M"}${toX(p.index).toFixed(2)},${toY(logs[k]).toFixed(2)}`).join(" ");
+    let hint = "";
+    if (suggested) {
+        const sLog = Math.log10(Math.max(suggested, 1e-12));
+        if (sLog >= lo && sLog <= hi) {
+            hint = `<line x1="${PAD}" y1="${toY(sLog).toFixed(2)}" x2="${W - 2}" y2="${toY(sLog).toFixed(2)}" stroke="var(--bad)" stroke-width="0.5" stroke-dasharray="2 1.5"/>`;
+        }
+    }
+    $("curveChart").innerHTML = `
+        <svg viewBox="0 0 ${W} ${H}" style="width: 100%; height: auto; display: block;">
+            <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="0.8"/>
+            ${hint}
+            <text x="${W - 2}" y="${H - 1}" font-size="3" fill="var(--muted)" text-anchor="end">sample index</text>
+            <text x="${PAD}" y="${PAD + 2}" font-size="3" fill="var(--muted)">k-dist (log)</text>
+        </svg>`;
+}
+
 $("project").addEventListener("click", async () => {
     const button = $("project");
     button.disabled = true;
@@ -400,7 +442,7 @@ $("project").addEventListener("click", async () => {
 
         const response = await fetch("{{ base_url }}api/v1/project", {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
+            headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
             body: JSON.stringify(payload)
         });
         const body = await response.json();
@@ -418,6 +460,7 @@ $("project").addEventListener("click", async () => {
              <span class="muted">(max ${Number(curve.max ?? 0).toFixed(2)}, median ${Number(curve.median ?? 0).toFixed(3)})</span>
              <button class="ghost" id="applyEpsilon">apply to form</button>` : "");
         renderScatter(body.data.points);
+        renderCurve(body.data.curve, body.data.suggested_epsilon);
         const apply = $("applyEpsilon");
         if (apply) {
             apply.addEventListener("click", () => { $("epsilon").value = hint.toFixed(3); });

@@ -36,6 +36,34 @@ final readonly class KDistanceAnalyzer
     }
 
     /**
+     * Downsamples a descending distance curve to at most $target points,
+     * always keeping the first (max) and last (min).
+     *
+     * @param list<float> $sortedDistances
+     *
+     * @return list<array{index: int, distance: float}>
+     */
+    public static function downsample(array $sortedDistances, int $target = 100): array
+    {
+        $count = count($sortedDistances);
+        if ($count === 0) {
+            return [];
+        }
+
+        $step = max(1, (int) ceil($count / max(1, $target)));
+        $points = [];
+        for ($i = 0; $i < $count; $i += $step) {
+            $points[] = ['index' => $i, 'distance' => $sortedDistances[$i]];
+        }
+        $last = $count - 1;
+        if (($last) % $step !== 0) {
+            $points[] = ['index' => $last, 'distance' => $sortedDistances[$last]];
+        }
+
+        return $points;
+    }
+
+    /**
      * @param list<FeatureVector> $vectors
      *
      * @throws InvalidArgumentException On empty input or neighbors below 1

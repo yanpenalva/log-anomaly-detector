@@ -60,8 +60,14 @@ final readonly class PhpMlKMeansDetector implements AnomalyDetector
     {
         $clusterer = new KMeans($this->parameters->clusters);
 
-        /** @var array<int, array<int|string, list<float>>> $clusters clusterId => index => sample */
-        $clusters = $clusterer->cluster($samples);
+        set_error_handler(static fn (): bool => true, E_DEPRECATED);
+
+        try {
+            /** @var array<int, array<int|string, list<float>>> $clusters clusterId => index => sample */
+            $clusters = $clusterer->cluster($samples);
+        } finally {
+            restore_error_handler();
+        }
 
         return new DetectionResult($this->assignments($samples, $clusters));
     }

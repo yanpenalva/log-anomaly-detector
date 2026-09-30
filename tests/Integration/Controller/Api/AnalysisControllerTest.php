@@ -6,6 +6,7 @@ namespace Tests\Integration\Controller\Api;
 
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Application\Anomaly\BuildVisualization;
+use App\Application\Anomaly\CompareDetectors;
 use App\Controller\Api\AnalysisController;
 use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\ClassifiedLogEntry;
@@ -14,8 +15,11 @@ use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\HttpMethod;
 use App\Domain\Anomaly\KDistanceAnalyzer;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
+use App\Infrastructure\MachineLearning\IsolationForestFactory;
+use App\Infrastructure\MachineLearning\LofFactory;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
+use App\Infrastructure\MachineLearning\PhpMlKMeansFactory;
 use App\Infrastructure\MachineLearning\PhpMlPcaTransformer;
 use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
@@ -55,7 +59,7 @@ class AnalysisControllerTest extends TestCase
 
         $this->app = $this->getMockBuilder(Engine::class)
             ->disableOriginalConstructor()
-            ->addMethods(['json', 'request'])
+            ->addMethods(['json', 'request', 'response'])
             ->getMock();
 
         $this->results = new SqliteAnalysisResultRepository($database->pdo);
@@ -76,6 +80,14 @@ class AnalysisControllerTest extends TestCase
                 new PhpMlDetectorFactory(),
                 new PhpMlPcaTransformer(2),
                 new KDistanceAnalyzer()
+            ),
+            new CompareDetectors(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new PhpMlDetectorFactory(),
+                new PhpMlKMeansFactory(),
+                new LofFactory(),
+                new IsolationForestFactory()
             ),
             $this->runs,
             new SqliteLogEntryRepository($database->pdo)
@@ -287,6 +299,79 @@ class AnalysisControllerTest extends TestCase
         self::assertNotNull($payload['data']['suggested_epsilon']);
         self::assertSame(4, $payload['data']['anomalies']);
         self::assertSame(2, $payload['data']['clusters']);
+        self::assertArrayHasKey('curve', $payload['data']);
+        self::assertCount(39, $payload['data']['curve']);
+        self::assertSame(['index', 'distance'], array_keys($payload['data']['curve'][0]));
+    }
+
+    public function testCompareReturnsFourDetectorReports(): void
+    {
+        $logs = [];
+        for ($i = 0; $i < 4; $i++) {
+            $logs[] = $this->log($i);
+        }
+        $logs[] = [
+            'method' => 'GET', 'endpoint' => '/.env', 'status_code' => 404,
+            'response_time' => 9, 'request_size' => 60, 'hour' => 3,
+        ];
+        $this->givenBody((string) json_encode(['logs' => $logs]));
+
+        $this->controller->compare();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(200, $status);
+        self::assertSame(5, $payload['data']['sample_count']);
+        self::assertCount(4, $payload['data']['detectors']);
+        self::assertSame(
+            ['dbscan', 'kmeans', 'lof', 'isolation_forest'],
+            array_column($payload['data']['detectors'], 'algorithm')
+        );
+        foreach ($payload['data']['detectors'] as $detector) {
+            self::assertArrayHasKey('silhouette', $detector);
+            self::assertArrayHasKey('elapsed_ms', $detector);
+        }
+    }
+
+    public function testCompareRejectsInvalidForestThreshold(): void
+    {
+        $this->givenBody((string) json_encode([
+            'logs' => [$this->log()],
+            'forest_threshold' => 9.9,
+        ]));
+
+        $this->controller->compare();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(422, $status);
+        self::assertSame('invalid_parameters', $payload['error']['code']);
+    }
+
+    public function testExportReturnsAnomaliesCsv(): void
+    {
+        $saved = $this->results->save($this->seededRun(), [
+            new ClassifiedLogEntry(
+                new HttpLogEntry(HttpMethod::Get, '/users', 200, 118.0, 1024, 10),
+                0,
+                false
+            ),
+            new ClassifiedLogEntry(
+                new HttpLogEntry(HttpMethod::Get, '/.env', 404, 9.0, 60, 3),
+                null,
+                true
+            ),
+        ]);
+
+        $response = new \flight\net\Response();
+        $this->app->method('response')->willReturn($response);
+
+        $this->givenBody('');
+        $this->controller->export((string) ($saved->id ?? 0));
+
+        self::assertSame([], $this->jsonCalls, 'export must not emit JSON');
+        self::assertSame('text/csv; charset=utf-8', $response->getHeader('Content-Type'));
+        self::assertSame('attachment; filename="run-' . ($saved->id ?? 0) . '-anomalies.csv"', $response->getHeader('Content-Disposition'));
+        self::assertStringContainsString('method,endpoint,status_code,response_time,request_size,hour', $response->getBody());
+        self::assertStringContainsString('GET,/.env,404,9,60,3', $response->getBody());
     }
 
     public function testProjectRejectsMoreThanCap(): void
@@ -333,6 +418,14 @@ class AnalysisControllerTest extends TestCase
                 new PhpMlDetectorFactory(),
                 new PhpMlPcaTransformer(2),
                 new KDistanceAnalyzer()
+            ),
+            new CompareDetectors(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new PhpMlDetectorFactory(),
+                new PhpMlKMeansFactory(),
+                new LofFactory(),
+                new IsolationForestFactory()
             ),
             $this->runs,
             new SqliteLogEntryRepository($this->pdo)

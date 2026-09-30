@@ -34,4 +34,29 @@ class CompareCommandTest extends TestCase
 
         self::assertSame(4, $parameters->clusters);
     }
+
+    public function testResolveLofParametersSharesMinimumSamples(): void
+    {
+        $parameters = CompareCommand::resolveLofParameters(null, 7);
+
+        self::assertSame(7, $parameters->minPts);
+        self::assertSame(1.5, $parameters->threshold);
+    }
+
+    public function testResolveLofParametersCliThresholdWins(): void
+    {
+        $parameters = CompareCommand::resolveLofParameters('2.5', 7);
+
+        self::assertSame(2.5, $parameters->threshold);
+    }
+
+    public function testResolveIsolationForestParametersDefaults(): void
+    {
+        $parameters = CompareCommand::resolveIsolationForestParameters(null, null, null);
+
+        self::assertSame(100, $parameters->trees);
+        self::assertSame(256, $parameters->subsampleSize);
+        self::assertSame(0.6, $parameters->threshold);
+        self::assertNull($parameters->seed);
+    }
 }

@@ -18,14 +18,21 @@ declare(strict_types=1);
 
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Application\Anomaly\BuildVisualization;
+use App\Application\Anomaly\CompareDetectors;
 use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\AnalysisRunRepository;
 use App\Domain\Anomaly\FeatureExtractor;
+use App\Domain\Anomaly\IsolationForestDetectorFactory;
 use App\Domain\Anomaly\KDistanceAnalyzer;
+use App\Domain\Anomaly\KMeansDetectorFactory;
+use App\Domain\Anomaly\LofDetectorFactory;
 use App\Domain\Anomaly\LogEntryRepository;
+use App\Infrastructure\MachineLearning\IsolationForestFactory;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
+use App\Infrastructure\MachineLearning\LofFactory;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
+use App\Infrastructure\MachineLearning\PhpMlKMeansFactory;
 use App\Infrastructure\MachineLearning\PhpMlPcaTransformer;
 use App\Infrastructure\Persistence\SqliteAnalysisResultRepository;
 use App\Infrastructure\Persistence\SqliteAnalysisRunRepository;
@@ -115,6 +122,17 @@ if ($db instanceof SimplePdo) {
         new PhpMlPcaTransformer(2),
         new KDistanceAnalyzer()
     );
+    $anomalySubstitutions[CompareDetectors::class] = new CompareDetectors(
+        new FeatureExtractor($encoder),
+        new MinMaxNormalizer(),
+        new PhpMlDetectorFactory(),
+        new PhpMlKMeansFactory(),
+        new LofFactory(),
+        new IsolationForestFactory()
+    );
+    $anomalySubstitutions[KMeansDetectorFactory::class] = new PhpMlKMeansFactory();
+    $anomalySubstitutions[LofDetectorFactory::class] = new LofFactory();
+    $anomalySubstitutions[IsolationForestDetectorFactory::class] = new IsolationForestFactory();
 }
 
 // Critical: reuse the same Engine instance; do not construct a new one

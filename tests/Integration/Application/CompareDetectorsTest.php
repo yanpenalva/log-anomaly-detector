@@ -10,11 +10,15 @@ use App\Domain\Anomaly\DbscanParameters;
 use App\Domain\Anomaly\FeatureExtractor;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\HttpMethod;
+use App\Domain\Anomaly\IsolationForestParameters;
 use App\Domain\Anomaly\KMeansParameters;
+use App\Domain\Anomaly\LofParameters;
 use App\Infrastructure\MachineLearning\LogCategoricalEncoder;
 use App\Infrastructure\MachineLearning\MinMaxNormalizer;
 use App\Infrastructure\MachineLearning\PhpMlDetectorFactory;
 use App\Infrastructure\MachineLearning\PhpMlKMeansFactory;
+use App\Infrastructure\MachineLearning\LofFactory;
+use App\Infrastructure\MachineLearning\IsolationForestFactory;
 use PHPUnit\Framework\TestCase;
 use InvalidArgumentException;
 
@@ -28,43 +32,86 @@ class CompareDetectorsTest extends TestCase
             new FeatureExtractor(new LogCategoricalEncoder(16)),
             new MinMaxNormalizer(),
             new PhpMlDetectorFactory(),
-            new PhpMlKMeansFactory()
+            new PhpMlKMeansFactory(),
+            new LofFactory(),
+            new IsolationForestFactory()
         );
     }
 
-    public function testBothDetectorsSeeSameSamplesWithFamilyFitMetrics(): void
+    public function testFourFamiliesSeeSameSamplesWithFamilyFitMetrics(): void
     {
         $report = $this->useCase->execute(
             DbscanParameters::fromRaw(0.5, 5),
             KMeansParameters::fromRaw(2, 5),
+            LofParameters::fromRaw(5, 1.5),
+            IsolationForestParameters::fromRaw(50, 32, 0.6, 42),
             $this->entries()
         );
 
         self::assertSame(63, $report->sampleCount);
+        self::assertCount(4, $report->detectors);
+        self::assertSame(
+            [DetectionAlgorithm::Dbscan, DetectionAlgorithm::KMeans, DetectionAlgorithm::Lof, DetectionAlgorithm::IsolationForest],
+            array_map(static fn ($d) => $d->algorithm, $report->detectors)
+        );
 
-        self::assertSame(DetectionAlgorithm::Dbscan, $report->dbscan->algorithm);
-        self::assertSame(2, $report->dbscan->clusterCount);
-        self::assertSame(3, $report->dbscan->anomalyCount);
-        self::assertSame(3 / 63, $report->dbscan->noiseRatio);
+        [$dbscan, $kmeans, $lof, $forest] = $report->detectors;
 
-        self::assertSame(DetectionAlgorithm::KMeans, $report->kmeans->algorithm);
-        self::assertSame(0.0, $report->kmeans->noiseRatio, 'K-Means never produces noise');
-        self::assertGreaterThanOrEqual(1, $report->kmeans->clusterCount);
-        self::assertLessThanOrEqual(2, $report->kmeans->clusterCount);
+        self::assertSame(2, $dbscan->clusterCount);
+        self::assertSame(3, $dbscan->anomalyCount);
+        self::assertSame(3 / 63, $dbscan->noiseRatio);
 
-        foreach ([$report->dbscan, $report->kmeans] as $detector) {
+        self::assertSame(0.0, $kmeans->noiseRatio, 'K-Means never produces noise');
+        self::assertGreaterThanOrEqual(1, $kmeans->clusterCount);
+        self::assertLessThanOrEqual(2, $kmeans->clusterCount);
+
+        self::assertSame(1, $lof->clusterCount, 'LOF labels normals with the single normal cluster');
+        self::assertGreaterThanOrEqual(0, $lof->anomalyCount);
+        self::assertLessThanOrEqual(63, $lof->anomalyCount);
+
+        self::assertSame(1, $forest->clusterCount);
+        self::assertGreaterThanOrEqual(0, $forest->anomalyCount);
+
+        foreach ([$dbscan, $kmeans] as $detector) {
             self::assertNotNull($detector->silhouette);
-            self::assertGreaterThanOrEqual(-1.0, $detector->silhouette);
-            self::assertLessThanOrEqual(1.0, $detector->silhouette);
+        }
+
+        foreach ($report->detectors as $detector) {
+            self::assertTrue($detector->silhouette === null || abs($detector->silhouette) <= 1.0);
             self::assertGreaterThanOrEqual(0.0, $detector->inertia);
             self::assertGreaterThanOrEqual(0.0, $detector->elapsedMs);
         }
     }
 
+    public function testSeededForestIsDeterministicAcrossRuns(): void
+    {
+        $parameters = fn (): array => [
+            DbscanParameters::fromRaw(0.5, 5),
+            KMeansParameters::fromRaw(2, 5),
+            LofParameters::fromRaw(5, 1.5),
+            IsolationForestParameters::fromRaw(50, 32, 0.6, 7),
+            $this->entries(),
+        ];
+
+        $first = $this->useCase->execute(...$parameters());
+        $second = $this->useCase->execute(...$parameters());
+
+        self::assertSame(
+            array_map(static fn ($d) => [$d->algorithm->value, $d->anomalyCount], $first->detectors),
+            array_map(static fn ($d) => [$d->algorithm->value, $d->anomalyCount], $second->detectors)
+        );
+    }
+
     public function testEmptyEntryListThrows(): void
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->useCase->execute(DbscanParameters::fromRaw(0.5, 5), KMeansParameters::fromRaw(2, 5), []);
+        $this->useCase->execute(
+            DbscanParameters::fromRaw(0.5, 5),
+            KMeansParameters::fromRaw(2, 5),
+            LofParameters::fromRaw(5, 1.5),
+            IsolationForestParameters::fromRaw(10, 16, 0.6),
+            []
+        );
     }
 
     /**

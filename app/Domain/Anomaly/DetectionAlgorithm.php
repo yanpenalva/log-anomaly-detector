@@ -8,4 +8,6 @@ enum DetectionAlgorithm: string
 {
     case Dbscan = 'dbscan';
     case KMeans = 'kmeans';
+    case Lof = 'lof';
+    case IsolationForest = 'isolation_forest';
 }

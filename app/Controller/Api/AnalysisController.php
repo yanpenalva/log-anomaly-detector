@@ -6,6 +6,8 @@ namespace App\Controller\Api;
 
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Application\Anomaly\BuildVisualization;
+use App\Application\Anomaly\CompareDetectors;
+use App\Application\Anomaly\DetectorReport;
 use App\Application\Anomaly\ProjectedSample;
 use App\Domain\Anomaly\AnalysisRun;
 use App\Domain\Anomaly\AnalysisRunRepository;
@@ -13,7 +15,10 @@ use App\Domain\Anomaly\ClassifiedLogEntry;
 use App\Domain\Anomaly\DbscanParameters;
 use App\Domain\Anomaly\HttpLogEntry;
 use App\Domain\Anomaly\InvalidHttpLogEntry;
+use App\Domain\Anomaly\IsolationForestParameters;
 use App\Domain\Anomaly\KDistanceAnalyzer;
+use App\Domain\Anomaly\KMeansParameters;
+use App\Domain\Anomaly\LofParameters;
 use App\Domain\Anomaly\LogEntryRepository;
 use App\Utils\Config;
 use flight\Engine;
@@ -51,6 +56,7 @@ final readonly class AnalysisController
         private readonly Config $config,
         private readonly AnalyzeLogs $analyzeLogs,
         private readonly BuildVisualization $visualization,
+        private readonly CompareDetectors $compareDetectors,
         private readonly AnalysisRunRepository $runs,
         private readonly LogEntryRepository $logEntries,
     ) {
@@ -105,6 +111,7 @@ final readonly class AnalysisController
                 'median' => KDistanceAnalyzer::quantile($distances, 0.5),
                 'min' => KDistanceAnalyzer::quantile($distances, 1.0),
             ],
+            'curve' => KDistanceAnalyzer::downsample($distances),
             'points' => array_map(
                 static fn (ProjectedSample $sample): array => [
                     'coordinates' => $sample->coordinates,
@@ -125,6 +132,99 @@ final readonly class AnalysisController
             array_map(static fn (ProjectedSample $s): ?int => $s->cluster, $samples),
             static fn (?int $cluster): bool => $cluster !== null
         )));
+    }
+
+    public function compare(): void
+    {
+        $payload = $this->validatedPayload(self::MAX_PROJECTION_LOGS);
+        if ($payload === null) {
+            return;
+        }
+
+        $raw = (array) json_decode((string) $this->app->request()->getBody(), true);
+        $minimumSamples = $payload['parameters']->minimumSamples;
+
+        try {
+            $report = $this->compareDetectors->execute(
+                $payload['parameters'],
+                KMeansParameters::fromRaw($raw['clusters'] ?? $this->config->get('anomaly.kmeans_clusters', 4), $minimumSamples),
+                LofParameters::fromRaw($raw['lof_min_pts'] ?? $minimumSamples, $raw['lof_threshold'] ?? LofParameters::DEFAULT_THRESHOLD),
+                IsolationForestParameters::fromRaw(
+                    $raw['trees'] ?? 100,
+                    $raw['subsample_size'] ?? 256,
+                    $raw['forest_threshold'] ?? IsolationForestParameters::DEFAULT_THRESHOLD,
+                    $raw['seed'] ?? null
+                ),
+                $payload['entries']
+            );
+        } catch (InvalidArgumentException $e) {
+            $this->error(self::ERROR_INVALID_PARAMETERS, $e->getMessage(), 422);
+            return;
+        }
+
+        $this->app->json(['data' => [
+            'sample_count' => $report->sampleCount,
+            'detectors' => array_map(
+                static fn (DetectorReport $d): array => [
+                    'algorithm' => $d->algorithm->value,
+                    'clusters' => $d->clusterCount,
+                    'anomalies' => $d->anomalyCount,
+                    'noise_ratio' => $d->noiseRatio,
+                    'silhouette' => $d->silhouette,
+                    'inertia' => $d->inertia,
+                    'elapsed_ms' => $d->elapsedMs,
+                ],
+                $report->detectors
+            ),
+        ]]);
+    }
+
+    public function export(string $id): void
+    {
+        $runId = (int) $id;
+        if ($runId < 1) {
+            $this->error(self::ERROR_INVALID_ID, 'Analysis id must be a positive integer', 400);
+            return;
+        }
+
+        $run = $this->runs->findById($runId);
+        if ($run === null) {
+            $this->error(self::ERROR_NOT_FOUND, sprintf('Analysis run %d not found', $runId), 404);
+            return;
+        }
+
+        $anomalies = $this->logEntries->anomaliesForRun($runId, $this->intConfig(
+            'anomaly.max_anomalies_in_response',
+            self::DEFAULT_MAX_ANOMALIES_IN_RESPONSE
+        ));
+
+        $response = $this->app->response();
+        $response->header('Content-Type', 'text/csv; charset=utf-8');
+        $response->header('Content-Disposition', sprintf('attachment; filename="run-%d-anomalies.csv"', $runId));
+        $response->write(self::csv($anomalies));
+    }
+
+    /**
+     * @param list<ClassifiedLogEntry> $anomalies
+     */
+    private static function csv(array $anomalies): string
+    {
+        $lines = ['method,endpoint,status_code,response_time,request_size,hour'];
+
+        foreach ($anomalies as $anomaly) {
+            $entry = $anomaly->entry;
+            $lines[] = sprintf(
+                '%s,%s,%d,%s,%d,%d',
+                $entry->method->value,
+                $entry->endpoint,
+                $entry->statusCode,
+                (string) $entry->responseTime,
+                $entry->requestSize,
+                $entry->hour
+            );
+        }
+
+        return implode("\n", $lines) . "\n";
     }
 
     /**

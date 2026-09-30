@@ -749,6 +749,63 @@ The dashboard gained three blocks:
   statistic each do in this project, and through which family they see data.
 - **Technique performance** — the measured benchmark table above, in-app.
 
+### Two more families: LOF and Isolation Forest
+
+DBSCAN (density) and K-Means (centroid) gained two hand-rolled detectors,
+both behind the same `AnomalyDetector` port — no scores ever leave them, only
+the binary anomaly decision (rule: anomaly ≠ number):
+
+- **LOF** (`LofDetector`, Breunig et al. 2000) — compares each point's local
+  density with its neighbors'; a point in a *locally* sparser pocket is an
+  anomaly even when a global ε would keep it clustered. Threshold: LOF > 1.5.
+- **Isolation Forest** (`IsolationForestDetector`, Liu et al. 2008) — ensemble
+  of random axis-split trees; anomalies isolate in fewer steps. Score
+  threshold 0.6, seeded RNG (`SeededRandom`) for reproducible runs.
+
+`php runway compare` now runs all four families over the same vectors:
+
+```text
+$ php runway compare datasets/development.csv
+comparison over 1400 shared normalized samples:
+dbscan           · clusters 6 · anomalies 25 (1.8%) · silhouette 0.778 · inertia 49.754 · 5069 ms
+kmeans           · clusters 4 · anomalies 0 (0.0%) · silhouette 0.836 · inertia 115.170 · 538 ms
+lof              · clusters 1 · anomalies 131 (9.4%) · silhouette n/a · inertia 1463.372 · 3397 ms
+isolation_forest · clusters 1 · anomalies 0 (0.0%) · silhouette n/a · inertia 1648.860 · 36 ms
+```
+
+Reading it: LOF flags 9.4% — it hunts *local* sparsity, so boundary points
+the ε-neighborhood chaining absorbs become suspicious. The Isolation Forest
+at threshold 0.6 reports nothing here; isolation scores compress toward 0.5
+as datasets grow, so treat the threshold as data-scale-dependent.
+
+### Compare API
+
+```bash
+curl -X POST http://localhost:8000/api/v1/compare \
+  -H "Content-Type: application/json" \
+  -d '{"logs": [...], "clusters": 4, "lof_threshold": 1.5, "trees": 100}'
+```
+
+Same caps as `/project` (2,000 entries); optional keys: `clusters`,
+`lof_min_pts`, `lof_threshold`, `trees`, `subsample_size`,
+`forest_threshold`, `seed`. Response: one report block per detector.
+
+### Run export and load probe
+
+- `GET /api/v1/analysis/{id}/export` — anomalies of a run as CSV attachment.
+- `php scripts/load_test.php [requests] [base]` — sequential probe of
+  `POST /analyze`, printing min/p50/p95/max/mean latency (HTTP-level numbers
+  for the performance table; the table's pipeline numbers above are
+  in-process).
+
+### CSRF protection
+
+Browser POSTs to the JSON API are CSRF-guarded with the double-submit
+pattern: `GET /` issues a `csrf_token` cookie (`SameSite=Lax`, readable by
+the dashboard JS), which must be echoed in the `X-CSRF-Token` header. The
+guard only activates when the request already carries cookies — plain API
+clients (curl, scripts) are unaffected.
+
 ## 21. Docker
 
 Docker is an **optional, reproducible local environment** — not a deployment target.
@@ -854,6 +911,7 @@ means.**
 - [x] **V4** — DBSCAN vs K-Means compared with family-fit metrics (noise ratio, inertia, silhouette) via `php runway compare`
 - [x] **V4.5** — PCA projection (`php runway project`) and Apriori anomaly signatures (`php runway characterize`)
 - [x] **V5** — benchmarking (§benchmarks), k-distance knee statistics (`php runway knee`), dashboard PCA scatter + in-app algorithm/performance reference
+- [x] **V6** — LOF + Isolation Forest detectors (4-family `php runway compare`), `POST /api/v1/compare`, k-distance curve chart on the dashboard, run CSV export, load probe script, CSRF guard
 
 No deployment/infrastructure roadmap — this is a study project.
 
