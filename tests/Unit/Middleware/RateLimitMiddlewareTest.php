@@ -23,6 +23,7 @@ class RateLimitMiddlewareTest extends TestCase
 
     protected function setUp(): void
     {
+        RateLimitMiddleware::resetState();
         $this->app = $this->getMockBuilder(Engine::class)
             ->disableOriginalConstructor()
             ->addMethods(['request', 'halt'])

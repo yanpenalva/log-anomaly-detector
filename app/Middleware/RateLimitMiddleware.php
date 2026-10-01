@@ -98,4 +98,11 @@ class RateLimitMiddleware
     {
         return sys_get_temp_dir() . DIRECTORY_SEPARATOR . self::STATE_FILE;
     }
+
+    public static function resetState(): void
+    {
+        if (is_file(self::statePath())) {
+            unlink(self::statePath());
+        }
+    }
 }
