@@ -673,42 +673,108 @@ Items come from `LogTransactionBuilder` discretization:
 
 ### Technique comparison and benchmarks
 
-All four PHP-ML techniques in the app, measured on the generated dataset
-(`scripts/generate_dataset.php`) at two sizes, same machine, PHP 8.4 CLI
-(measured 2026-09; timings include the shared extract + normalize pipeline):
+All four detector families plus the three analysis components, measured on
+the generated dataset (`scripts/generate_dataset.php`, deterministic seed 42).
 
-| Technique | Family | Role | 1,400 rows | 5,600 rows | Scaling |
-|---|---|---|---|---|---|
-| DBSCAN (ε=0.35, m=5) | density | detector | 3.5 s | 58.6 s | **O(n²)** — ×16.7 for ×4 data |
-| K-Means (k=4, 10 restarts) | centroid | detector | 0.41 s | 2.60 s | ~O(n) — ×6.3 for ×4 data |
-| PCA (→ 2D) | reduction | analysis | ~0.5 s | ~1.7 s | O(n·m²), m ≪ n |
-| Apriori (s≥0.3) | association | analysis | ~0.1 s | ~1.0 s | driven by itemsets, not n |
+**Methodology.** Timings are wall-clock `time` around each command, single
+run, warm OS cache — they include PHP startup, config load, CSV parsing and
+the shared extract → encode → min-max normalize pipeline. The per-detector
+`ms` printed by `compare` is the in-process detection time only (`hrtime`
+around `detect()`); silhouette/inertia are computed after the timed section.
+No JIT, no parallelism — a study rig, not a benchmark lab.
 
-Detection quality on the same runs:
+Environment: PHP 8.4.26 (CLI, NTS, opcache) · AMD Ryzen 5 5600H (6C/12T,
+single-threaded run) · 30 GiB RAM · Linux.
 
-| Metric | DBSCAN @1,400 | K-Means @1,400 | DBSCAN @5,600 | K-Means @5,600 |
-|---|---|---|---|---|
-| clusters | 6 | 4 | 14 | 4 |
-| anomalies | 25 (1.8%) | 0 | 21 (0.4%) | 0 |
-| silhouette | 0.778 | 0.836 | 0.783 | 0.831 |
-| inertia | 49.8 | 115.2 | 208.3 | 515.3 |
+#### Detector scaling (detection time, in-process)
 
-How to read it:
+| Family | Params | 1,400 | 2,800 | 5,600 | Growth 1400→5600 | Complexity |
+|---|---|---:|---:|---:|---:|---|
+| DBSCAN | ε=0.35, m=5 | 3.42 s | 14.47 s | 57.39 s | **×16.8** | O(n²) neighborhood search |
+| K-Means | k=4, 10 restarts | 0.44 s | 1.04 s | 2.14 s | ×4.9 | ~O(n), fixed k |
+| LOF | minPts=5, t=1.5 | 3.44 s | 14.88 s | 58.06 s | **×16.9** | O(n²) (kNN + reachability) |
+| Isolation Forest | 50 trees, ψ=256, t=0.6 | 0.03 s | 0.05 s | 0.10 s | ×3.4 | ~O(n log n) |
 
-- **Scaling is the headline.** ×4 data made DBSCAN ×16.7 slower (quadratic
-  neighborhood search) while K-Means grew ×6.3 (Lloyd iterations, linear in
-  n even with 10 restarts).
-- **Same ε, denser data → less noise** (1.8% → 0.4%): density thresholds are
-  relative to the data. At 5,600 rows most former outliers found enough
-  neighbors inside ε.
-- K-Means' higher silhouette at both sizes is the same lesson as
-  [§Detector comparison](#detector-comparison-cli-dbscan-vs-k-means): it
-  never reports noise, so its "quality" hides the anomalies DBSCAN surfaces.
-- `php runway compare` wall time at 5,600 rows is ~148 s, of which only ~61 s
-  is detection — silhouette is O(n²) per detector and dominates at scale.
-- The 5,600-row signature run surfaced a true anomaly signature:
-  `size=large + method=POST => time=slow` (support 0.67, normal rate 0.003) —
-  the payload-flood profile is almost absent from normal traffic.
+×4 the rows → DBSCAN and LOF pay ×16.8/×16.9 (quadratic, as advertised);
+K-Means pays ×4.9 (linear in n with fixed k and restart count); the Isolation
+Forest is barely touched — per-tree cost is capped by ψ=256, only the scoring
+queries multiply.
+
+#### Detection quality on the same runs
+
+| Metric | 1,400 | 2,800 | 5,600 |
+|---|---|---|---|
+| **DBSCAN** clusters / anomalies | 6 / 25 (1.8%) | 9 / 35 (1.2%) | 14 / 21 (0.4%) |
+| **K-Means** clusters / anomalies | 4 / 0 | 4 / 0 | 4 / 0 |
+| **LOF** anomalies (t=1.5) | 131 (9.4%) | 244 (8.7%) | 463 (8.3%) |
+| **iForest** anomalies (t=0.6) | 0 | 0 | 0 |
+| DBSCAN silhouette / inertia | 0.778 / 49.8 | 0.787 / 101.5 | 0.783 / 208.3 |
+| K-Means silhouette / inertia | 0.836 / 115.2 | 0.829 / 266.7 | 0.831 / 515.4 |
+| LOF inertia | 1 463 | 2 984 | 5 981 |
+| iForest inertia | 1 649 | 3 329 | 6 621 |
+
+Inertia grows with n even when quality is constant — never compare inertia
+across dataset sizes, only across detectors on the *same* matrix. Silhouette
+is size-stable here (0.78–0.84), which is why it is the shared metric.
+
+How the four disagree — and why:
+
+- **DBSCAN** is the honest baseline: noise points *are* the anomalies, and
+  the noise share shrinks as the same ε sees denser data (1.8% → 0.4%).
+- **K-Means** has no noise concept; every sample lands in a profile, so its
+  "better" silhouette (0.83 vs 0.78) is partly the sound of anomalies being
+  absorbed, not better detection.
+- **LOF** flags ~9% — it judges each point *relative to its own
+  neighborhood*, so cluster-boundary points that ε-chaining absorbs stay
+  suspicious. Treat the threshold as a sensitivity dial: lower → closer to
+  DBSCAN, higher → only pocket-anomalies.
+- **Isolation Forest** at t=0.6 reports nothing on this data: isolation
+  scores crowd near 0.5 as n grows while ψ stays fixed. The threshold is
+  data-scale-dependent — sweep it (or shrink ψ) before trusting a zero.
+
+#### Analysis components
+
+| Component | Command | 1,400 | 5,600 | Notes |
+|---|---|---:|---:|---|
+| PCA → 2D | `php runway project` | ~0.5 s | ~1.4 s | wall − DBSCAN; covariance is O(n·m²), m=33 ≪ n |
+| Apriori | `php runway characterize` | ~0.3 s | ~1.6 s | mines anomaly transactions only |
+| k-distance | `php runway knee` | 1.73 s | — | pure O(n²), no detection pass |
+
+#### HTTP-level latency
+
+`php scripts/load_test.php`, sequential, same rig, real SQLite persistence:
+
+| Payload | Requests | min | p50 | p95 | max |
+|---|---:|---:|---:|---:|---:|
+| 40 logs | 10 | 198 ms | 225 ms | 272 ms | 344 ms |
+| 460 logs | 5 | 668 ms | 690 ms | — | 817 ms |
+
+HTTP adds a roughly constant ~200 ms over the pipeline (framework, JSON,
+SQLite transaction) across the payload sizes tested.
+
+#### Metric glossary (family-fit)
+
+| Metric | Family | Formula here | Undefined when |
+|---|---|---|---|
+| noise ratio | density | anomalies ÷ samples | never (0.0 for non-noise families) |
+| inertia | centroid | Σ ‖x − centroid(cluster(x))‖² | all noise (0.0) |
+| silhouette | shared | mean (b−a)/max(a,b) over clustered samples | < 2 non-noise clusters (`n/a`) |
+| LOF | local density | mean lrd(neighbor)⁄lrd(point) | single sample (≤ 1 by construction) |
+| isolation score | isolation | 2^(−E[h]/c(ψ)) | single sample |
+
+#### Lessons
+
+1. **Scaling is the headline.** ×4 data → DBSCAN ×16.8, LOF ×16.9
+   (quadratic); K-Means ×4.9; iForest ×3.4. For n ≥ ~10⁴ on this rig only
+   K-Means and iForest stay interactive.
+2. **Density is relative.** Same ε, denser data → noise share drops 4.5×.
+   Re-run `php runway knee` when traffic shape changes.
+3. **Silhouette flatters centroid methods.** K-Means "wins" quality metrics
+   while silently absorbing the anomalies DBSCAN surfaces.
+4. **LOF is the sensitivity knob** between "only extreme outliers" and
+   "everything at the border".
+5. **iForest thresholds don't transfer** across dataset scales — recalibrate.
+
 
 ### Epsilon suggestion (k-distance knee)
 
