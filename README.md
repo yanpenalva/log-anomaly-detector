@@ -844,7 +844,7 @@ the ε-neighborhood chaining absorbs become suspicious. The Isolation Forest
 at threshold 0.6 reports nothing here; isolation scores compress toward 0.5
 as datasets grow, so treat the threshold as data-scale-dependent.
 
-### Compare API
+### Compare API and consensus
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/compare \
@@ -854,7 +854,43 @@ curl -X POST http://localhost:8000/api/v1/compare \
 
 Same caps as `/project` (2,000 entries); optional keys: `clusters`,
 `lof_min_pts`, `lof_threshold`, `trees`, `subsample_size`,
-`forest_threshold`, `seed`. Response: one report block per detector.
+`forest_threshold`, `seed`. Response: one report block per detector plus the
+**consensus** block — a majority vote over the three independent families
+(DBSCAN + LOF + Isolation Forest): a sample is an anomaly when at least two
+of them flag it. The CLI prints the same line:
+
+```text
+consensus       · anomalies 11 (0.8%) · unanimous 3 · majority-only 8 (dbscan+lof+forest, >=2 votes)
+```
+
+Unanimous = flagged by all three families (highest-confidence anomalies
+without any score); majority-only = the border cases where families
+disagree — exactly the samples worth eyeballing.
+
+Inline input everywhere: every analysis endpoint accepts either `logs`
+(JSON array) or `text` (CSV dataset or nginx combined access.log, with
+optional `format: csv|nginx`, auto-detected otherwise). The dashboard
+textarea accepts all three — pick the format or leave it on `auto`.
+
+### Hourly drift (windows)
+
+`php runway windows <file>` slices the batch by hour and re-runs the full
+pipeline per slice — extraction, normalization, DBSCAN and the knee — so
+drift becomes visible: the same profile can be dense at 10h and isolated at
+03h.
+
+```text
+$ php runway windows datasets/development.csv
+hourly drift over 1400 samples:
+00h · samples   62 · clusters  2 · anomalies   2 (3.2%) · knee ε 0.006
+...
+```
+
+### Knee endpoint
+
+`POST /api/v1/knee` returns the epsilon suggestion, quantiles and the
+downsampled k-distance curve without running any detection pass. Same input
+contract as `/analyze` (`logs` or `text`), same 2,000-entry cap.
 
 ### Run export and load probe
 
@@ -899,7 +935,14 @@ All endpoints under `/api/v1`:
 | `POST` | `/api/v1/analyze` | batch analysis + atomic persistence |
 | `GET` | `/api/v1/analysis` | recent runs (`?limit=1..200`) |
 | `GET` | `/api/v1/analysis/{id}` | run detail + anomalies (capped, `anomalies_truncated`) |
+| `GET` | `/api/v1/analysis/{id}/export` | anomalies of a run as CSV download |
+| `POST` | `/api/v1/compare` | 4-family comparison + consensus vote (study-only) |
+| `POST` | `/api/v1/knee` | epsilon suggestion + k-distance curve |
 | `POST` | `/api/v1/detect` | **501** — see [§14](#14-why-detect-returns-501) |
+
+Full request/response contract: [`docs/openapi.yaml`](docs/openapi.yaml).
+Browser POSTs are CSRF-guarded (double-submit cookie; cookie-less API
+clients unaffected) and rate-limited per IP — see [SECURITY.md](SECURITY.md).
 
 `POST /api/v1/analyze`:
 
@@ -978,6 +1021,7 @@ means.**
 - [x] **V4.5** — PCA projection (`php runway project`) and Apriori anomaly signatures (`php runway characterize`)
 - [x] **V5** — benchmarking (§benchmarks), k-distance knee statistics (`php runway knee`), dashboard PCA scatter + in-app algorithm/performance reference
 - [x] **V6** — LOF + Isolation Forest detectors (4-family `php runway compare`), `POST /api/v1/compare`, k-distance curve chart on the dashboard, run CSV export, load probe script, CSRF guard
+- [x] **V7** — DBSCAN+LOF+iForest consensus vote, hourly drift analysis (`php runway windows`), `POST /api/v1/knee`, inline CSV/nginx text input on all analysis endpoints, per-IP rate limiting, OpenAPI spec (`docs/openapi.yaml`)
 
 No deployment/infrastructure roadmap — this is a study project.
 

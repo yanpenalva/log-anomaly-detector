@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: log-anomaly-detector API
+  version: "7.0"
+  description: >
+    Unsupervised HTTP log anomaly detection. Anomaly = DBSCAN noise point;
+    the API never returns confidence scores. POST bodies accept either a
+    `logs` array of log objects or inline `text` (CSV dataset or nginx
+    combined access.log). Inline paths are never accepted.
+servers:
+  - url: http://localhost:8000/api/v1
+components:
+  schemas:
+    LogEntry:
+      type: object
+      required: [method, endpoint, status_code, response_time, request_size, hour]
+      properties:
+        method: { type: string, example: GET }
+        endpoint: { type: string, example: /users }
+        status_code: { type: integer, example: 200 }
+        response_time: { type: number, example: 118.5, description: milliseconds }
+        request_size: { type: integer, example: 1024, description: bytes }
+        hour: { type: integer, minimum: 0, maximum: 23, example: 10 }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: invalid_parameters }
+            message: { type: string }
+    DetectorReport:
+      type: object
+      properties:
+        algorithm: { type: string, enum: [dbscan, kmeans, lof, isolation_forest] }
+        clusters: { type: integer }
+        anomalies: { type: integer }
+        noise_ratio: { type: number }
+        silhouette: { type: number, nullable: true }
+        inertia: { type: number }
+        elapsed_ms: { type: number }
+  parameters:
+    epsilon:
+      name: epsilon
+      in: query
+      schema: { type: number, minimum: 0.001, maximum: 1000 }
+    minimumSamples:
+      name: minimum_samples
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 10000 }
+  securitySchemes:
+    csrfDoubleSubmit:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: >
+        Required on POSTs only when the request carries cookies (browsers).
+        Echo the csrf_token cookie. Plain API clients are unaffected.
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses:
+        "200": { description: OK }
+  /analyze:
+    post:
+      summary: Batch DBSCAN analysis with atomic persistence
+      security: [{ csrfDoubleSubmit: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logs:
+                  type: array
+                  items: { $ref: '#/components/schemas/LogEntry' }
+                text: { type: string, description: inline CSV or nginx access.log }
+                format: { type: string, enum: [csv, nginx] }
+                epsilon: { type: number }
+                minimum_samples: { type: integer }
+      responses:
+        "200":
+          description: Run summary (run_id, samples, clusters, anomalies)
+        "422": { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        "413": { description: Payload too large }
+        "429": { description: Rate limited }
+  /project:
+    post:
+      summary: DBSCAN + PCA 2D projection with k-distance knee suggestion
+      security: [{ csrfDoubleSubmit: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logs: { type: array, items: { $ref: '#/components/schemas/LogEntry' } }
+                text: { type: string }
+                format: { type: string, enum: [csv, nginx] }
+                epsilon: { type: number }
+                minimum_samples: { type: integer }
+      responses:
+        "200": { description: Points, per-point cluster/anomaly labels, suggested_epsilon, quantiles, downsampled curve }
+        "422": { description: Validation error or too few samples for PCA }
+  /compare:
+    post:
+      summary: Run DBSCAN, K-Means, LOF and Isolation Forest over the same vectors
+      security: [{ csrfDoubleSubmit: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logs: { type: array, items: { $ref: '#/components/schemas/LogEntry' } }
+                text: { type: string }
+                format: { type: string, enum: [csv, nginx] }
+                clusters: { type: integer, description: K-Means k }
+                lof_min_pts: { type: integer }
+                lof_threshold: { type: number }
+                trees: { type: integer }
+                subsample_size: { type: integer }
+                forest_threshold: { type: number }
+                seed: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: One report per detector plus the dbscan+lof+forest majority-vote consensus
+  /knee:
+    post:
+      summary: k-distance curve and epsilon suggestion (no detection pass)
+      security: [{ csrfDoubleSubmit: [] }]
+      responses:
+        "200": { description: suggested_epsilon, quantiles, downsampled curve }
+  /detect:
+    post:
+      summary: Not implemented by design
+      description: DBSCAN is batch-only; no incremental inference. Always 501.
+      responses:
+        "501": { description: not_implemented }
+  /analysis:
+    get:
+      summary: Recent analysis runs
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200": { description: Run list }
+  /analysis/{id}:
+    get:
+      summary: Run detail with anomalies
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: Run + anomaly entries (capped, anomalies_truncated) }
+        "404": { description: Not found }
+  /analysis/{id}/export:
+    get:
+      summary: Anomalies of a run as CSV attachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: text/csv download
+          content:
+            text/csv:
+              schema: { type: string }
+        "404": { description: Not found }

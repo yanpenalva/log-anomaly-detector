@@ -141,6 +141,14 @@ class CompareCommand extends AbstractBaseCommand
             $this->printDetector($io, $detector);
         }
 
+        $io->purple(sprintf(
+            'consensus       · anomalies %d (%.1f%%) · unanimous %d · majority-only %d (dbscan+lof+forest, ≥2 votes)',
+            $report->consensus->anomalyCount,
+            $report->consensus->sampleCount > 0 ? $report->consensus->anomalyCount / $report->consensus->sampleCount * 100 : 0.0,
+            $report->consensus->unanimousCount,
+            $report->consensus->majorityOnlyCount
+        ), true);
+
         $io->comment('dbscan anomaly = noise; kmeans/lof/forest anomaly = threshold rule per family', true);
         $io->comment('silhouette [-1..1] shared; inertia = within-cluster sum of squares', true);
     }

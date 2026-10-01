@@ -6,6 +6,7 @@ namespace App\Application\Anomaly;
 
 use App\Domain\Anomaly\AnomalyDetectorFactory;
 use App\Domain\Anomaly\ClusteringMetrics;
+use App\Domain\Anomaly\ConsensusRule;
 use App\Domain\Anomaly\DetectionAlgorithm;
 use App\Domain\Anomaly\DetectionResult;
 use App\Domain\Anomaly\DbscanParameters;
@@ -24,8 +25,8 @@ use InvalidArgumentException;
 /**
  * Runs four detector families (density, centroid, local-density, isolation)
  * over the same extracted + normalized vectors and reports family-fit
- * metrics. Study-only: nothing is persisted and the product anomaly
- * semantics (DBSCAN noise) stay untouched.
+ * metrics plus the DBSCAN+LOF+iForest majority vote. Study-only: nothing is
+ * persisted and the product anomaly semantics (DBSCAN noise) stay untouched.
  */
 final readonly class CompareDetectors
 {
@@ -56,13 +57,35 @@ final readonly class CompareDetectors
         }
 
         $vectors = $this->normalize($entries);
+        $timings = [];
+        $run = function (string $key, callable $detect) use (&$timings): DetectionResult {
+            $started = hrtime(true);
+            $result = $detect();
+            $timings[$key] = (hrtime(true) - $started) / 1_000_000;
+
+            return $result;
+        };
+
+        $dbscanResult = $run('dbscan', fn (): DetectionResult => $this->dbscanFactory->create($dbscan)->detect($vectors));
+        $kmeansResult = $run('kmeans', fn (): DetectionResult => $this->kmeansFactory->create($kmeans)->detect($vectors));
+        $lofResult = $run('lof', fn (): DetectionResult => $this->lofFactory->create($lof)->detect($vectors));
+        $forestResult = $run('isolation_forest', fn (): DetectionResult => $this->forestFactory->create($forest)->detect($vectors));
+
+        $rule = new ConsensusRule();
+        $votes = [$dbscanResult, $lofResult, $forestResult];
+        $consensus = $rule->apply($votes);
 
         return new ComparisonReport(count($vectors), [
-            $this->measure(DetectionAlgorithm::Dbscan, fn (): DetectionResult => $this->dbscanFactory->create($dbscan)->detect($vectors), $vectors),
-            $this->measure(DetectionAlgorithm::KMeans, fn (): DetectionResult => $this->kmeansFactory->create($kmeans)->detect($vectors), $vectors),
-            $this->measure(DetectionAlgorithm::Lof, fn (): DetectionResult => $this->lofFactory->create($lof)->detect($vectors), $vectors),
-            $this->measure(DetectionAlgorithm::IsolationForest, fn (): DetectionResult => $this->forestFactory->create($forest)->detect($vectors), $vectors),
-        ]);
+            $this->report(DetectionAlgorithm::Dbscan, $dbscanResult, $vectors, $timings['dbscan']),
+            $this->report(DetectionAlgorithm::KMeans, $kmeansResult, $vectors, $timings['kmeans']),
+            $this->report(DetectionAlgorithm::Lof, $lofResult, $vectors, $timings['lof']),
+            $this->report(DetectionAlgorithm::IsolationForest, $forestResult, $vectors, $timings['isolation_forest']),
+        ], new ConsensusReport(
+            $consensus->sampleCount(),
+            $consensus->anomalyCount(),
+            $rule->unanimousCount($votes),
+            $rule->majorityOnlyCount($votes)
+        ));
     }
 
     /**
@@ -79,15 +102,10 @@ final readonly class CompareDetectors
     }
 
     /**
-     * @param callable(): DetectionResult $detect
      * @param list<FeatureVector> $vectors
      */
-    private function measure(DetectionAlgorithm $algorithm, callable $detect, array $vectors): DetectorReport
+    private function report(DetectionAlgorithm $algorithm, DetectionResult $result, array $vectors, float $elapsedMs): DetectorReport
     {
-        $started = hrtime(true);
-        $result = $detect();
-        $elapsedMs = (hrtime(true) - $started) / 1_000_000;
-
         return new DetectorReport(
             $algorithm,
             $result->clusterCount(),

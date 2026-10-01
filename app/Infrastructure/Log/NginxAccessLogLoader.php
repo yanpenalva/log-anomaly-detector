@@ -38,8 +38,41 @@ final class NginxAccessLogLoader implements HttpLogLoader
         $file = new SplFileObject($path, 'r');
         $file->setFlags(self::FILE_FLAGS);
 
-        $entries = [];
+        return $this->parseLines($this->iterate($file), $path);
+    }
+
+    /**
+     * Parses inline access.log text (combined format); trusted callers only.
+     *
+     * @return list<HttpLogEntry>
+     */
+    public function loadString(string $contents, string $label = 'inline'): array
+    {
+        return $this->parseLines(
+            array_filter(array_map('trim', preg_split('/\r?\n/', $contents) ?: []), static fn (string $l): bool => $l !== ''),
+            $label
+        );
+    }
+
+    /**
+     * @return iterable<int, string>
+     */
+    private function iterate(SplFileObject $file): iterable
+    {
         foreach ($file as $line) {
+            yield is_string($line) ? $line : '';
+        }
+    }
+
+    /**
+     * @param iterable<int, string> $lines
+     *
+     * @return list<HttpLogEntry>
+     */
+    private function parseLines(iterable $lines, string $label): array
+    {
+        $entries = [];
+        foreach ($lines as $line) {
             $entry = $this->parseLine(is_string($line) ? trim($line) : '');
             if ($entry !== null) {
                 $entries[] = $entry;
@@ -47,7 +80,7 @@ final class NginxAccessLogLoader implements HttpLogLoader
         }
 
         if ($entries === []) {
-            throw AccessLogException::emptyDataset($path);
+            throw AccessLogException::emptyDataset($label);
         }
 
         return $entries;

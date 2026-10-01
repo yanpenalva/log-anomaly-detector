@@ -16,6 +16,7 @@ final readonly class ComparisonReport
     public function __construct(
         public readonly int $sampleCount,
         public readonly array $detectors,
+        public readonly ConsensusReport $consensus,
     ) {
     }
 }

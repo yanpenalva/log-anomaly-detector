@@ -19,6 +19,7 @@ declare(strict_types=1);
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Application\Anomaly\BuildVisualization;
 use App\Application\Anomaly\CompareDetectors;
+use App\Application\Anomaly\EstimateEpsilon;
 use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\AnalysisRunRepository;
 use App\Domain\Anomaly\FeatureExtractor;
@@ -129,6 +130,11 @@ if ($db instanceof SimplePdo) {
         new PhpMlKMeansFactory(),
         new LofFactory(),
         new IsolationForestFactory()
+    );
+    $anomalySubstitutions[EstimateEpsilon::class] = new EstimateEpsilon(
+        new FeatureExtractor($encoder),
+        new MinMaxNormalizer(),
+        new KDistanceAnalyzer()
     );
     $anomalySubstitutions[KMeansDetectorFactory::class] = new PhpMlKMeansFactory();
     $anomalySubstitutions[LofDetectorFactory::class] = new LofFactory();

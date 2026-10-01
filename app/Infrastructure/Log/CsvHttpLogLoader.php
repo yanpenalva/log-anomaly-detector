@@ -34,9 +34,52 @@ final class CsvHttpLogLoader implements HttpLogLoader
         $file = new SplFileObject($path, 'r');
         $file->setFlags(self::FILE_FLAGS);
 
-        $header = $this->readHeader($file, $path);
+        return $this->parse($file, $path);
+    }
+
+    /**
+     * Parses inline CSV text (same header contract); trusted callers only.
+     *
+     * @return list<HttpLogEntry>
+     */
+    public function loadString(string $contents, string $label = 'inline'): array
+    {
+        $lines = array_values(array_filter(
+            array_map('trim', preg_split('/\r?\n/', $contents) ?: []),
+            static fn (string $line): bool => $line !== ''
+        ));
+
+        if ($lines === []) {
+            throw CsvDatasetException::invalidHeader($label, 'file is empty');
+        }
+
+        $header = $this->headerMap((array) str_getcsv($lines[0]), $label);
+        $entries = [];
+
+        foreach (array_slice($lines, 1) as $i => $line) {
+            $row = (array) str_getcsv($line);
+            if ($this->isEmptyRow($row)) {
+                continue;
+            }
+
+            $entries[] = $this->parseRow($row, $header, $label, $i + 2);
+        }
+
+        if ($entries === []) {
+            throw CsvDatasetException::emptyDataset($label);
+        }
+
+        return $entries;
+    }
+
+    /**
+     * @return list<HttpLogEntry>
+     */
+    private function parse(SplFileObject $file, string $label): array
+    {
+        $header = $this->readHeader($file, $label);
         if ($header === null) {
-            throw CsvDatasetException::invalidHeader($path, 'file is empty');
+            throw CsvDatasetException::invalidHeader($label, 'file is empty');
         }
 
         $entries = [];
@@ -48,11 +91,11 @@ final class CsvHttpLogLoader implements HttpLogLoader
                 continue;
             }
 
-            $entries[] = $this->parseRow($row, $header, $path, $line);
+            $entries[] = $this->parseRow($row, $header, $label, $line);
         }
 
         if ($entries === []) {
-            throw CsvDatasetException::emptyDataset($path);
+            throw CsvDatasetException::emptyDataset($label);
         }
 
         return $entries;
@@ -74,15 +117,25 @@ final class CsvHttpLogLoader implements HttpLogLoader
             return null;
         }
 
+        return $this->headerMap($headerRow, $path);
+    }
+
+    /**
+     * @param array<int|string, mixed> $headerRow
+     *
+     * @return array<string, int>
+     */
+    private function headerMap(array $headerRow, string $label): array
+    {
         $map = [];
         foreach ($headerRow as $index => $name) {
-            $map[trim((string) $name)] = $index;
+            $map[trim((string) $name)] = (int) $index;
         }
 
         $missing = array_diff(self::REQUIRED_COLUMNS, array_keys($map));
         if ($missing !== []) {
             throw CsvDatasetException::invalidHeader(
-                $path,
+                $label,
                 'missing column(s): ' . implode(', ', $missing)
             );
         }

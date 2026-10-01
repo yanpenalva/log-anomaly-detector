@@ -8,6 +8,7 @@ use App\Application\Anomaly\AnalyzeLogs;
 use App\Application\Anomaly\BuildVisualization;
 use App\Application\Anomaly\CompareDetectors;
 use App\Application\Anomaly\DetectorReport;
+use App\Application\Anomaly\EstimateEpsilon;
 use App\Application\Anomaly\ProjectedSample;
 use App\Domain\Anomaly\AnalysisRun;
 use App\Domain\Anomaly\AnalysisRunRepository;
@@ -20,6 +21,8 @@ use App\Domain\Anomaly\KDistanceAnalyzer;
 use App\Domain\Anomaly\KMeansParameters;
 use App\Domain\Anomaly\LofParameters;
 use App\Domain\Anomaly\LogEntryRepository;
+use App\Infrastructure\Log\CsvHttpLogLoader;
+use App\Infrastructure\Log\NginxAccessLogLoader;
 use App\Utils\Config;
 use flight\Engine;
 use InvalidArgumentException;
@@ -42,12 +45,17 @@ final readonly class AnalysisController
     private const ERROR_INVALID_LOG = 'invalid_log';
     private const ERROR_INVALID_PARAMETERS = 'invalid_parameters';
     private const ERROR_PAYLOAD_TOO_LARGE = 'payload_too_large';
+    private const ERROR_INVALID_TEXT = 'invalid_text';
     private const ERROR_TOO_MANY_LOGS = 'too_many_logs';
     private const ERROR_NOT_IMPLEMENTED = 'not_implemented';
     private const ERROR_NOT_FOUND = 'not_found';
     private const ERROR_INVALID_ID = 'invalid_id';
 
     private const LOGS_FIELD = 'logs';
+    private const TEXT_FIELD = 'text';
+    private const FORMAT_FIELD = 'format';
+    private const FORMAT_CSV = 'csv';
+    private const FORMAT_NGINX = 'nginx';
     private const EPSILON_FIELD = 'epsilon';
     private const MINIMUM_SAMPLES_FIELD = 'minimum_samples';
 
@@ -57,6 +65,7 @@ final readonly class AnalysisController
         private readonly AnalyzeLogs $analyzeLogs,
         private readonly BuildVisualization $visualization,
         private readonly CompareDetectors $compareDetectors,
+        private readonly EstimateEpsilon $estimateEpsilon,
         private readonly AnalysisRunRepository $runs,
         private readonly LogEntryRepository $logEntries,
     ) {
@@ -164,6 +173,15 @@ final readonly class AnalysisController
 
         $this->app->json(['data' => [
             'sample_count' => $report->sampleCount,
+            'consensus' => [
+                'anomalies' => $report->consensus->anomalyCount,
+                'noise_ratio' => $report->consensus->sampleCount > 0
+                    ? $report->consensus->anomalyCount / $report->consensus->sampleCount
+                    : 0.0,
+                'unanimous' => $report->consensus->unanimousCount,
+                'majority_only' => $report->consensus->majorityOnlyCount,
+                'voters' => ['dbscan', 'lof', 'isolation_forest'],
+            ],
             'detectors' => array_map(
                 static fn (DetectorReport $d): array => [
                     'algorithm' => $d->algorithm->value,
@@ -176,6 +194,31 @@ final readonly class AnalysisController
                 ],
                 $report->detectors
             ),
+        ]]);
+    }
+
+    public function knee(): void
+    {
+        $payload = $this->validatedPayload(self::MAX_PROJECTION_LOGS);
+        if ($payload === null) {
+            return;
+        }
+
+        $summary = $this->estimateEpsilon->execute($payload['parameters'], $payload['entries']);
+        $distances = $summary->sortedDistances;
+
+        $this->app->json(['data' => [
+            'sample_count' => count($distances),
+            'k' => max(1, $payload['parameters']->minimumSamples - 1),
+            'suggested_epsilon' => $summary->suggestedEpsilon,
+            'quantiles' => [
+                'max' => KDistanceAnalyzer::quantile($distances, 0.0),
+                'p99' => KDistanceAnalyzer::quantile($distances, 0.01),
+                'p90' => KDistanceAnalyzer::quantile($distances, 0.1),
+                'median' => KDistanceAnalyzer::quantile($distances, 0.5),
+                'min' => KDistanceAnalyzer::quantile($distances, 1.0),
+            ],
+            'curve' => KDistanceAnalyzer::downsample($distances),
         ]]);
     }
 
@@ -287,13 +330,84 @@ final readonly class AnalysisController
     private function validatedPayload(?int $maxLogs = null): ?array
     {
         $raw = $this->decodedBody();
-        $entries = $raw === null ? null : $this->validatedEntries($raw, $maxLogs);
-        $parameters = $raw === null ? null : $this->validatedParameters($raw);
+        if ($raw === null) {
+            return null;
+        }
+
+        $entries = array_key_exists(self::TEXT_FIELD, $raw)
+            ? $this->validatedTextEntries($raw, $maxLogs)
+            : $this->validatedEntries($raw, $maxLogs);
+        if ($entries === null) {
+            return null;
+        }
+
+        $parameters = $this->validatedParameters($raw);
 
         return match (true) {
-            $entries === null || $parameters === null => null,
+            $parameters === null => null,
             default => ['entries' => $entries, 'parameters' => $parameters],
         };
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     *
+     * @return list<HttpLogEntry>|null
+     */
+    private function validatedTextEntries(array $raw, ?int $maxLogs): ?array
+    {
+        $text = $raw[self::TEXT_FIELD] ?? null;
+        if (!is_string($text) || trim($text) === '') {
+            $this->error(
+                self::ERROR_INVALID_REQUEST,
+                sprintf('Field "%s" must be a non-empty string of CSV or nginx access.log lines', self::TEXT_FIELD),
+                422
+            );
+            return null;
+        }
+
+        $format = $raw[self::FORMAT_FIELD] ?? null;
+        if ($format !== null && $format !== self::FORMAT_CSV && $format !== self::FORMAT_NGINX) {
+            $this->error(
+                self::ERROR_INVALID_REQUEST,
+                sprintf('Field "%s" accepts "csv" or "nginx"', self::FORMAT_FIELD),
+                422
+            );
+            return null;
+        }
+
+        $loader = match ($format ?? $this->guessFormat($text)) {
+            self::FORMAT_CSV => new CsvHttpLogLoader(),
+            default => new NginxAccessLogLoader(),
+        };
+
+        try {
+            $entries = $loader->loadString($text);
+        } catch (RuntimeException $e) {
+            $this->error(self::ERROR_INVALID_TEXT, $e->getMessage(), 422);
+            return null;
+        }
+
+        $limit = $maxLogs ?? $this->intConfig('anomaly.max_logs_per_request', self::DEFAULT_MAX_LOGS_PER_REQUEST);
+        if (count($entries) > $limit) {
+            $this->error(
+                self::ERROR_TOO_MANY_LOGS,
+                sprintf('Field "%s" accepts at most %d entries per request', self::TEXT_FIELD, $limit),
+                422
+            );
+            return null;
+        }
+
+        return $entries;
+    }
+
+    private function guessFormat(string $text): string
+    {
+        $firstLine = strtok($text, "\n") ?: '';
+
+        return str_contains($firstLine, 'method') && str_contains($firstLine, ',') && str_contains($firstLine, 'endpoint')
+            ? self::FORMAT_CSV
+            : self::FORMAT_NGINX;
     }
 
     /**

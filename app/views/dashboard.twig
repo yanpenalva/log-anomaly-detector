@@ -62,6 +62,21 @@
                 </label>
                 <input type="number" id="minSamples" value="5" step="1" min="1" max="10000">
             </div>
+            <div class="field">
+                <label>
+                    Input format
+                    <span class="tooltip">?
+                        <span class="tip">auto: JSON array of log objects, CSV dataset text
+                        (with the method,endpoint,... header) or nginx combined
+                        access.log lines — detected automatically.</span>
+                    </span>
+                </label>
+                <select id="format">
+                    <option value="auto">auto</option>
+                    <option value="csv">csv</option>
+                    <option value="nginx">nginx</option>
+                </select>
+            </div>
             <button id="analyze">Analyze</button>
             <button id="project">Project &amp; scatter</button>
             <button class="ghost" id="loadSample">Load sample logs</button>
@@ -394,6 +409,25 @@ function renderScatter(points) {
             <text x="1" y="7" font-size="3" fill="var(--muted)">pc2</text>
             ${dots}
         </svg>`;
+}
+
+function parseInput() {
+    const raw = $("logs").value.trim();
+    if (raw.startsWith("[")) {
+        try {
+            const logs = JSON.parse(raw);
+            return {logs};
+        } catch (e) {
+            alertBox("Invalid JSON: " + e.message);
+            return null;
+        }
+    }
+    if (!raw) {
+        alertBox("Paste logs first (JSON array, CSV dataset or nginx access.log).");
+        return null;
+    }
+    const format = $("format").value;
+    return format === "auto" ? {text: raw} : {text: raw, format};
 }
 
 function csrfToken() {

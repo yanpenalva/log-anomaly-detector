@@ -90,6 +90,24 @@ When adding pages with third-party scripts, styles, or iframes, **update CSP del
 
 ---
 
+## API hardening (V7)
+
+- **CSRF (double-submit):** `GET /` issues a `csrf_token` cookie
+  (`SameSite=Lax`, no HttpOnly so the dashboard JS can echo it). Browser
+  POSTs (requests that already carry cookies) must mirror it in the
+  `X-CSRF-Token` header; mismatch → `403 csrf_mismatch`. Cookie-less API
+  clients are unaffected.
+- **Rate limiting:** `RateLimitMiddleware` applies a token bucket
+  (default capacity 10, refill 1/s, per client IP) to POST endpoints.
+  Buckets are backed by a flock-guarded temp file so they survive the PHP
+  built-in server's per-connection processes; a real multi-worker deployment
+  should move them to shared storage. Tune via
+  `anomaly.rate_limit_capacity` / `anomaly.rate_limit_refill_per_second`.
+- **Heavy endpoints** (`/analyze`, `/project`, `/compare`, `/knee`) are
+  capped at 2,000 entries because the k-distance pass is O(n²).
+
+---
+
 ## Related docs
 
 - Flight security: https://docs.flightphp.com/en/v3/learn/security  

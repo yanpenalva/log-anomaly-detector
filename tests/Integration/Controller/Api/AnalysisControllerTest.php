@@ -7,6 +7,7 @@ namespace Tests\Integration\Controller\Api;
 use App\Application\Anomaly\AnalyzeLogs;
 use App\Application\Anomaly\BuildVisualization;
 use App\Application\Anomaly\CompareDetectors;
+use App\Application\Anomaly\EstimateEpsilon;
 use App\Controller\Api\AnalysisController;
 use App\Domain\Anomaly\AnalysisResultRepository;
 use App\Domain\Anomaly\ClassifiedLogEntry;
@@ -88,6 +89,11 @@ class AnalysisControllerTest extends TestCase
                 new PhpMlKMeansFactory(),
                 new LofFactory(),
                 new IsolationForestFactory()
+            ),
+            new EstimateEpsilon(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new KDistanceAnalyzer()
             ),
             $this->runs,
             new SqliteLogEntryRepository($database->pdo)
@@ -304,6 +310,75 @@ class AnalysisControllerTest extends TestCase
         self::assertSame(['index', 'distance'], array_keys($payload['data']['curve'][0]));
     }
 
+    public function testKneeReturnsSuggestionAndCurve(): void
+    {
+        $logs = [];
+        for ($i = 0; $i < 4; $i++) {
+            $logs[] = $this->log($i);
+        }
+        $logs[] = [
+            'method' => 'GET', 'endpoint' => '/.env', 'status_code' => 404,
+            'response_time' => 9, 'request_size' => 60, 'hour' => 3,
+        ];
+        $this->givenBody((string) json_encode(['logs' => $logs]));
+
+        $this->controller->knee();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(200, $status);
+        self::assertSame(5, $payload['data']['sample_count']);
+        self::assertSame(4, $payload['data']['k']);
+        self::assertNotNull($payload['data']['suggested_epsilon']);
+        self::assertSame(
+            ['max', 'p99', 'p90', 'median', 'min'],
+            array_keys($payload['data']['quantiles'])
+        );
+        self::assertCount(5, $payload['data']['curve']);
+    }
+
+    public function testAnalyzeAcceptsInlineCsvText(): void
+    {
+        $csv = "method,endpoint,status_code,response_time,request_size,hour\n"
+            . "GET,/users,200,100,900,10\n"
+            . "POST,/payments,201,340,1500,12\n";
+        $this->givenBody((string) json_encode(['text' => $csv, 'format' => 'csv']));
+
+        $this->controller->analyze();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(200, $status);
+        self::assertSame(2, $payload['data']['samples']);
+    }
+
+    public function testProjectAcceptsInlineNginxTextWithAutoFormat(): void
+    {
+        $log = implode("\n", array_map(static fn (int $i): string => sprintf(
+            '127.0.0.1 - - [10/Oct/2026:13:%02d:00 -0300] "GET /users HTTP/1.1" 200 %d',
+            $i,
+            900 + $i
+        ), range(0, 39)));
+        $log .= "\n" . '127.0.0.1 - - [10/Oct/2026:14:00:00 -0300] "GET /.env HTTP/1.1" 404 60 0.005';
+        $this->givenBody((string) json_encode(['text' => $log]));
+
+        $this->controller->project();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(200, $status);
+        self::assertSame(41, $payload['data']['sample_count']);
+        self::assertSame(1, $payload['data']['anomalies']);
+    }
+
+    public function testTextWithBadCsvReturnsInvalidText(): void
+    {
+        $this->givenBody((string) json_encode(['text' => 'not,a,valid,header,row', 'format' => 'csv']));
+
+        $this->controller->analyze();
+
+        [$payload, $status] = $this->jsonCalls[0];
+        self::assertSame(422, $status);
+        self::assertSame('invalid_text', $payload['error']['code']);
+    }
+
     public function testCompareReturnsFourDetectorReports(): void
     {
         $logs = [];
@@ -326,6 +401,9 @@ class AnalysisControllerTest extends TestCase
             ['dbscan', 'kmeans', 'lof', 'isolation_forest'],
             array_column($payload['data']['detectors'], 'algorithm')
         );
+        self::assertSame(['dbscan', 'lof', 'isolation_forest'], $payload['data']['consensus']['voters']);
+        self::assertGreaterThanOrEqual(0, $payload['data']['consensus']['anomalies']);
+        self::assertArrayHasKey('unanimous', $payload['data']['consensus']);
         foreach ($payload['data']['detectors'] as $detector) {
             self::assertArrayHasKey('silhouette', $detector);
             self::assertArrayHasKey('elapsed_ms', $detector);
@@ -426,6 +504,11 @@ class AnalysisControllerTest extends TestCase
                 new PhpMlKMeansFactory(),
                 new LofFactory(),
                 new IsolationForestFactory()
+            ),
+            new EstimateEpsilon(
+                new FeatureExtractor(new LogCategoricalEncoder(16)),
+                new MinMaxNormalizer(),
+                new KDistanceAnalyzer()
             ),
             $this->runs,
             new SqliteLogEntryRepository($this->pdo)
